@@ -14,7 +14,9 @@
     "db:reset": "supabase db reset",
     "db:test": "supabase test db",
     "db:types": "supabase gen types typescript --local > src/lib/database.types.ts && oxfmt src/lib/database.types.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:e2e": "scripts/e2e/run.sh",
+    "spec:build": "python3 scripts/spec/build_spec.py"
   },
   "dependencies": {
     "@fontsource-variable/manrope": "^5.3.0",

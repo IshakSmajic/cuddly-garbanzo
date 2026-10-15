@@ -2,7 +2,7 @@
 
 A private, friends-only chat app built with React, TypeScript, Vite and Supabase.
 The plan, rules and data model are in `Chat_App_Project_Specification.docx`; UI
-mockups are in `design/`.
+mockups are in `design/`; progress and next steps are in `docs/PROGRESS.md`.
 
 ## Requirements
 
@@ -71,5 +71,7 @@ While the local stack runs:
 | `npm run build` | Type-check, then production build into `dist/` |
 | `npm run typecheck` | Type-check only |
 | `npm test` | Unit tests (Vitest) |
+| `npm run test:e2e` | Headless-Chrome walk-through of the auth flow (needs the local stack and Google Chrome) |
+| `npm run spec:build` | Regenerate the spec `.docx` from `scripts/spec/build_spec.py` |
 | `npm run lint` | Oxlint |
 | `npm run db:stop` | Stop the local stack |
