@@ -59,6 +59,11 @@ export function SignIn() {
           onChange={(e) => setPassword(e.target.value)}
           required
         />
+        <p className="field-aside">
+          <Link to="/forgot-password" state={{ email: email.trim() }}>
+            Forgot password?
+          </Link>
+        </p>
         {error && (
           <p className="form-error" role="alert">
             {error}

@@ -5,8 +5,7 @@ import { Button } from '../components/Button.tsx'
 import { Field } from '../components/Field.tsx'
 import { supabase } from '../lib/supabase.ts'
 import { emailRedirectUrl } from '../lib/urls.ts'
-
-const PASSWORD_MIN = 8 // matches auth.minimum_password_length
+import { PASSWORD_MIN } from '../lib/validation.ts'
 
 export function SignUp() {
   const navigate = useNavigate()

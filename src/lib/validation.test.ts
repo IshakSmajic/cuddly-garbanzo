@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { displayNameError, normalizeUsername, usernameError } from './validation.ts'
+import { displayNameError, newPasswordError, normalizeUsername, usernameError } from './validation.ts'
 
 describe('normalizeUsername', () => {
   it('lowercases and trims', () => {
@@ -32,5 +32,20 @@ describe('displayNameError', () => {
   it('counts emoji as one character, like PostgreSQL', () => {
     expect(displayNameError('😀'.repeat(50))).toBeNull()
     expect(displayNameError('😀'.repeat(51))).toBe('At most 50 characters.')
+  })
+})
+
+describe('newPasswordError', () => {
+  it('accepts a long enough password typed twice', () => {
+    expect(newPasswordError('correct-horse', 'correct-horse')).toBeNull()
+    expect(newPasswordError('12345678', '12345678')).toBeNull()
+  })
+
+  it('rejects a short password before comparing', () => {
+    expect(newPasswordError('1234567', '7654321')).toBe('Use at least 8 characters for your password.')
+  })
+
+  it('rejects a mismatched confirmation', () => {
+    expect(newPasswordError('correct-horse', 'correct-hors')).toBe("The passwords don't match.")
   })
 })

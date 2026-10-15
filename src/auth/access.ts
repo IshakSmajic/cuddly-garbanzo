@@ -6,8 +6,12 @@ export type AuthState =
   | { status: 'signedOut' }
   | { status: 'signedIn'; hasUsername: boolean }
 
-/** guest: sign-in/sign-up pages. onboarding: choose a username. app: everything else. */
-export type Area = 'guest' | 'onboarding' | 'app'
+/**
+ * guest: sign-in/sign-up pages. onboarding: choose a username. account: pages
+ * any signed-in user may use, onboarded or not (setting a new password after a
+ * reset link). app: everything else.
+ */
+export type Area = 'guest' | 'onboarding' | 'account' | 'app'
 
 /** Returns the path to redirect to, or null if the visitor may stay. */
 export function redirectFor(state: AuthState, area: Area): string | null {
@@ -23,6 +27,8 @@ export function redirectFor(state: AuthState, area: Area): string | null {
       return home
     case 'onboarding':
       return state.hasUsername ? '/' : null
+    case 'account':
+      return null
     case 'app':
       return state.hasUsername ? null : '/onboarding'
   }

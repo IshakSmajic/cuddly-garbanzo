@@ -286,6 +286,12 @@ a:hover {
   font-size: 13px;
 }
 
+.field-aside {
+  margin-top: -12px;
+  font-size: 13px;
+  text-align: right;
+}
+
 .field-hint.is-invalid,
 .form-error {
   color: var(--red);

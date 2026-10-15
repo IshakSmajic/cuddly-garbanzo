@@ -1,26 +1,19 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Link, Navigate, useLocation } from 'react-router'
 import { AuthLayout } from '../components/AuthLayout.tsx'
 import { Button } from '../components/Button.tsx'
 import { supabase } from '../lib/supabase.ts'
 import { emailRedirectUrl } from '../lib/urls.ts'
-
-const RESEND_COOLDOWN_SECONDS = 60 // the hosted project allows one email per 60 s
+import { useCooldown } from '../lib/useCooldown.ts'
 
 type LocationState = { email?: string; unconfirmed?: boolean } | null
 
 export function CheckEmail() {
   const state = useLocation().state as LocationState
   const email = state?.email
-  const [cooldown, setCooldown] = useState(0)
+  const [cooldown, startCooldown] = useCooldown()
   const [message, setMessage] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
-
-  useEffect(() => {
-    if (cooldown <= 0) return
-    const timer = setTimeout(() => setCooldown((s) => s - 1), 1000)
-    return () => clearTimeout(timer)
-  }, [cooldown])
 
   // Reached directly (no email in navigation state): nothing to show.
   if (!email) return <Navigate to="/sign-up" replace />
@@ -43,7 +36,7 @@ export function CheckEmail() {
       )
     } else {
       setMessage('Sent. Check your inbox and spam folder.')
-      setCooldown(RESEND_COOLDOWN_SECONDS)
+      startCooldown()
     }
   }
 

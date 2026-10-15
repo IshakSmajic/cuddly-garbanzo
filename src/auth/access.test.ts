@@ -16,12 +16,15 @@ describe('redirectFor', () => {
     ['onboarded user on sign-in', ready, 'guest', '/'],
     ['onboarded user on onboarding', ready, 'onboarding', '/'],
     ['onboarded user in the app', ready, 'app', null],
+    ['signed-out visitor on reset-password', signedOut, 'account', '/sign-in'],
+    ['new user on reset-password', needsUsername, 'account', null],
+    ['onboarded user on reset-password', ready, 'account', null],
   ])('%s', (_label, state, area, expected) => {
     expect(redirectFor(state, area)).toBe(expected)
   })
 
   it('never redirects while auth is still loading', () => {
-    for (const area of ['guest', 'onboarding', 'app'] as const) {
+    for (const area of ['guest', 'onboarding', 'account', 'app'] as const) {
       expect(redirectFor({ status: 'loading' }, area)).toBeNull()
     }
   })

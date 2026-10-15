@@ -1,6 +1,6 @@
 # Thread — progress and handoff
 
-Last updated: 15 October 2026, after milestone 2.
+Last updated: 15 October 2026, after milestone 2b.
 
 This file is the running record of the project: what is done, what is live,
 what was decided, and what comes next. Read it at the start of a session and
@@ -14,8 +14,8 @@ are in `CLAUDE.md`.
 |---|---|---|
 | 1 | Foundation: TypeScript, local Supabase, remove demo | Done (commit `14b28b3`) |
 | 2 | Auth: sign up, confirm email, sign in, onboarding, protected routes | Done (commit `c2409e4`) |
-| 2b | Password reset (follow-up to milestone 2) | **Next.** Proposed, not yet approved |
-| 3 | Profiles and avatars: profile editor, avatar upload/replace/remove | Not started |
+| 2b | Password reset (follow-up to milestone 2) | Done (commit "Milestone 2b: password reset") |
+| 3 | Profiles and avatars: profile editor, avatar upload/replace/remove | **Next.** Plan outline below |
 | 4 | User discovery and requests: search, send/cancel/accept/decline, blocking | Not started |
 | 5 | Friendships: friend list, unfriend, accept creates the conversation | Not started |
 | 6 | Direct messaging persistence: history, friends-only sending, paging | Not started |
@@ -51,8 +51,10 @@ Milestones 1–7 make the app usable by friends; 8–10 improve it.
 ### Local Supabase (Docker, 12 containers)
 
 - All three migrations applied. Auth settings in `supabase/config.toml`:
-  email confirmation on, minimum password 8, site URL and redirect allow-list
-  `http://localhost:5173` (and `127.0.0.1:5173`).
+  email confirmation on, minimum password 8, site URL `http://localhost:5173`,
+  redirect allow-list (exact URLs) `http://localhost:5173`,
+  `http://localhost:5173/reset-password` and the same two on `127.0.0.1`,
+  `secure_password_change = true`, "password changed" notification email on.
 - Studio: http://127.0.0.1:54323 · Mailpit (catches all emails):
   http://127.0.0.1:54324
 - The developer chose to keep every container on (don't disable analytics or
@@ -63,7 +65,9 @@ Milestones 1–7 make the app usable by friends; 8–10 improve it.
 - Linked to the repo. Has migrations 1 and 2 only, so the public schema is
   **empty**. The demo tables and the demo accounts (alice/bob) are deleted.
 - **Not yet applied:** the profiles migration, the auth settings (site URL,
-  redirect URLs, confirm email, password length), and an email sender (SMTP).
+  redirect URLs including `/reset-password`, confirm email, password length,
+  secure password change, password-changed notification), and an email
+  sender (SMTP).
   These are done at deployment time, with the developer's go-ahead.
 - No frontend is deployed anywhere yet.
 
@@ -133,6 +137,37 @@ Behaviour worth knowing:
   request is in flight; validation messages appear on submit.
 - Below 900 px the brand panel is hidden and the form fills the screen.
 
+### Milestone 2b: password reset
+
+No migration (passwords live in `auth.users`). Config changes listed under
+"Local Supabase" above.
+
+| File | Role |
+|---|---|
+| `src/pages/ForgotPassword.tsx` | `/forgot-password` (guest): sends the reset email; same message for any address; 60 s resend cooldown |
+| `src/pages/ResetPassword.tsx` | `/reset-password` (account): new password + confirm → `updateUser({ password })` → home |
+| `src/auth/access.ts` | New `account` area: needs a session, ignores the username, so the reset page works before onboarding |
+| `src/lib/useCooldown.ts` | Resend cooldown shared by check-email and forgot-password |
+| `src/lib/validation.ts` | `PASSWORD_MIN`, `newPasswordError` (+ tests) |
+| `src/lib/urls.ts` | `passwordResetUrl()` |
+
+Behaviour worth knowing:
+
+- The reset link signs the user in with an ordinary session (implicit flow,
+  tokens in the URL hash). The page is not a security boundary; the server
+  rule is `secure_password_change`, which needs a sign-in from the last
+  ~24 h or a reauthentication code. A recovery session is always fresh.
+  **A future "change password" in settings will need the reauthentication
+  flow** (`supabase.auth.reauthenticate()` + nonce) for older sessions.
+- Supabase Auth (v2.197) **revokes every other session's refresh token when
+  the password changes**. We checked this with a control test, so the app
+  makes no extra `signOut({ scope: 'others' })` call. Access tokens already
+  issued stay valid until they expire (≤ 1 h).
+- A used or expired link lands on sign-in with the link error (existing
+  `linkError`).
+- Error codes handled: `same_password`, `weak_password`,
+  `reauthentication_needed`, rate limits.
+
 ## Decisions
 
 Accepted by the developer (spec section 11):
@@ -158,8 +193,8 @@ by Claude to match it.
 
 ## Open items
 
-1. **Password reset (milestone 2b).** Proposed, waiting for approval. See the
-   plan below.
+1. **Password reset on hosted:** add `<live origin>/reset-password` to the
+   hosted redirect allow-list along with the other auth settings (item 4).
 2. **Email delivery for real users.** Supabase sends the emails, but its
    built-in sender only reaches the Supabase team's own addresses and is
    heavily rate-limited, so friends need a real mail server:
@@ -183,24 +218,6 @@ by Claude to match it.
    3.2:1 contrast, below 4.5:1. Near-black text on the red would pass.
 
 ## Next phase
-
-### Milestone 2b: password reset (propose, then wait for approval)
-
-- **Sign in:** add a "Forgot password?" link → `/forgot-password`.
-- **`/forgot-password`** (guest area): email field → `supabase.auth.resetPasswordForEmail(email, { redirectTo: <origin>/reset-password })`.
-  Always show the same "If an account exists, we sent a link" message (no
-  enumeration). Same 60 s resend cooldown as check-email.
-- **`/reset-password`:** the email link signs the user in with a recovery
-  session (`PASSWORD_RECOVERY` auth event). Show a "Choose a new password"
-  form (min 8 chars) → `supabase.auth.updateUser({ password })` → go home.
-  This route must be reachable while signed in, and must not be swallowed by
-  the onboarding/app redirects; decide how `Gate`/`redirectFor` treats it,
-  and add unit tests for that.
-- Add `http://localhost:5173/reset-password` to the redirect allow-list in
-  `config.toml` if it isn't covered by the site URL.
-- **Tests:** extend `scripts/e2e/walkthrough.mjs`: request a reset → open the
-  Mailpit link → set a new password → sign out → sign in with it; also an
-  expired/used link shows the link-error message.
 
 ### Milestone 3: profiles and avatars (per spec section 5)
 
@@ -249,7 +266,10 @@ Plan outline to present for approval:
   starts Vite on 5173 and headless Chrome (installed at
   `/Applications/Google Chrome.app`), then `walkthrough.mjs`. Screenshots go
   to `scripts/e2e/shots/`. It reads confirmation links through Mailpit's API.
-  Run `npm run db:reset` afterwards to clear the test accounts.
+  Run `npm run db:reset` afterwards to clear the test accounts. Emails are
+  found by recipient and subject (`latestLink(email, 'Confirm' | 'Reset')`).
+  The script also calls the Auth API directly (a second "device"), reading
+  the URL and key from `.env.development.local`.
 - **The spec** is generated: edit the content in `scripts/spec/build_spec.py`
   and run `npm run spec:build`. Don't hand-edit the `.docx`. macOS has only
   Python 3.9 and no Word/LibreOffice/pandoc; preview with

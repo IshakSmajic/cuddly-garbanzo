@@ -2,12 +2,27 @@
 // DevTools protocol (no extra dependencies). Run it with scripts/e2e/run.sh,
 // which starts the dev server and Chrome first. Needs the local Supabase stack
 // running. Screenshots land in scripts/e2e/shots/ (git-ignored).
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 
 const SHOTS = new URL('./shots/', import.meta.url).pathname
 mkdirSync(SHOTS, { recursive: true })
 const APP = 'http://localhost:5173'
 const MAILPIT = 'http://127.0.0.1:54324'
+// The app's own env file, for calling the Auth API directly (a second "device").
+const env = Object.fromEntries(
+  readFileSync(new URL('../../.env.development.local', import.meta.url), 'utf8')
+    .split('\n')
+    .map((line) => line.match(/^\s*([A-Z_]+)\s*=\s*(.*?)\s*$/))
+    .filter(Boolean)
+    .map((m) => [m[1], m[2].replace(/^["']|["']$/g, '')]),
+)
+async function authApi(path, body) {
+  return fetch(`${env.VITE_SUPABASE_URL}/auth/v1/${path}`, {
+    method: 'POST',
+    headers: { apikey: env.VITE_SUPABASE_PUBLISHABLE_KEY, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
 
 const targets = await (await fetch('http://127.0.0.1:9333/json')).json()
 const page = targets.find((t) => t.type === 'page')
@@ -82,17 +97,23 @@ async function click(textContent) {
     el.click();
   })()`)
 }
-async function latestConfirmLink(email) {
+async function findEmail(email, subject) {
+  const query = `to:${email} subject:"${subject}"`
   for (let i = 0; i < 30; i++) {
-    const list = await (await fetch(`${MAILPIT}/api/v1/search?query=${encodeURIComponent('to:' + email)}`)).json()
-    if (list.messages?.length) {
-      const msg = await (await fetch(`${MAILPIT}/api/v1/message/${list.messages[0].ID}`)).json()
-      const href = msg.HTML.match(/href="([^"]*verify[^"]*)"/)?.[1]
-      if (href) return href.replaceAll('&amp;', '&')
-    }
+    const list = await (await fetch(`${MAILPIT}/api/v1/search?query=${encodeURIComponent(query)}`)).json()
+    if (list.messages?.length) return list.messages[0]
     await sleep(300)
   }
-  throw new Error(`no confirmation email for ${email}`)
+  return null
+}
+// Supabase's email links all go through /auth/v1/verify; the subject tells them apart.
+async function latestLink(email, subject) {
+  const found = await findEmail(email, subject)
+  if (!found) throw new Error(`no "${subject}" email for ${email}`)
+  const msg = await (await fetch(`${MAILPIT}/api/v1/message/${found.ID}`)).json()
+  const href = msg.HTML.match(/href="([^"]*verify[^"]*)"/)?.[1]
+  if (!href) throw new Error(`no link in "${subject}" email for ${email}`)
+  return href.replaceAll('&amp;', '&')
 }
 function check(cond, label) {
   console.log(`${cond ? 'PASS' : 'FAIL'}  ${label}`)
@@ -137,7 +158,7 @@ await waitFor(`location.pathname === '/check-email'`, 'unconfirmed → /check-em
 check((await text()).includes('Confirm your email before signing in'), 'unconfirmed sign-in explains what to do')
 
 console.log('4. Confirm via email link')
-const link = await latestConfirmLink(ana.email)
+const link = await latestLink(ana.email, 'Confirm')
 await go(link)
 await waitFor(`location.pathname === '/onboarding'`, 'confirmation → /onboarding', 10000)
 check(true, 'confirmation link signs in and lands on onboarding')
@@ -187,7 +208,7 @@ await type('Email', ben.email)
 await type('Password', ben.password)
 await click('Create account')
 await waitFor(`location.pathname === '/check-email'`, 'ben check-email')
-await go(await latestConfirmLink(ben.email))
+await go(await latestLink(ben.email, 'Confirm'))
 await waitFor(`location.pathname === '/onboarding'`, 'ben onboarding', 10000)
 await type('Username', ana.username)
 await waitFor(`document.body.innerText.includes('is taken')`, 'taken check')
@@ -205,6 +226,104 @@ await waitFor(`location.pathname === '/sign-in'`, 'ben sign out')
 await shot('09-sign-in-mobile')
 const overflow = await evaluate('document.documentElement.scrollWidth > window.innerWidth')
 check(!overflow, 'no horizontal scroll at 390px')
+
+console.log('10. Forgot password')
+await viewport(1680, 900)
+await go(APP + '/sign-in')
+await type('Email', ana.email)
+await click('Forgot password?')
+await waitFor(`location.pathname === '/forgot-password'`, '/forgot-password')
+check((await evaluate(`document.querySelector('input').value`)) === ana.email, 'forgot-password keeps the typed email')
+await shot('10-forgot-password')
+await click('Send reset link')
+await waitFor(`document.body.innerText.includes('If an account exists')`, 'reset sent')
+const subtitle = (email) => evaluate(`document.querySelector('.auth-subtitle').innerText.replace(${JSON.stringify(email)}, '<email>')`)
+const knownMessage = await subtitle(ana.email)
+check((await text()).includes('Resend email in'), 'resend has a cooldown')
+await shot('11-forgot-password-sent')
+const nobody = `nobody.${run}@example.com`
+await go(APP + '/forgot-password')
+await type('Email', nobody)
+await click('Send reset link')
+await waitFor(`document.body.innerText.includes('If an account exists')`, 'unknown email sent')
+check((await subtitle(nobody)) === knownMessage, 'unknown email gets the identical message (no enumeration)')
+
+console.log('11. Reset password via email link')
+// A second "device": a session made straight through the Auth API.
+const other = await (await authApi('token?grant_type=password', { email: ana.email, password: ana.password })).json()
+check(Boolean(other.refresh_token), 'second session signed in')
+const resetLink = await latestLink(ana.email, 'Reset')
+await go(resetLink)
+await waitFor(`location.pathname === '/reset-password'`, 'reset link → /reset-password', 10000)
+check(true, 'reset link opens the new-password form')
+await shot('12-reset-password')
+const newPassword = 'brand-new-horse-1'
+await type('New password', newPassword)
+await type('Confirm password', 'something-else')
+await click('Save password')
+await waitFor(`document.body.innerText.includes("The passwords don't match.")`, 'mismatch error')
+check(true, 'mismatched confirmation is rejected before sending')
+await type('New password', ana.password)
+await type('Confirm password', ana.password)
+await click('Save password')
+await waitFor(`document.body.innerText.includes('That is your current password')`, 'same password error')
+check(true, 'reusing the current password is refused by the server')
+await shot('13-reset-password-same')
+await type('New password', newPassword)
+await type('Confirm password', newPassword)
+await click('Save password')
+await waitFor(`location.pathname === '/'`, 'reset → home', 10000)
+check((await text()).includes(`@${ana.username}`), 'saving the new password lands on home')
+check(Boolean(await findEmail(ana.email, 'password was changed')), '"password was changed" email is sent')
+const refresh = await authApi('token?grant_type=refresh_token', { refresh_token: other.refresh_token })
+check(refresh.status >= 400, `the server revoked the other device's session (refresh → ${refresh.status})`)
+
+console.log('12. Sign in with the new password')
+await click('Sign out')
+await waitFor(`location.pathname === '/sign-in'`, 'sign out')
+await type('Email', ana.email)
+await type('Password', ana.password)
+await click('Enter Thread')
+await waitFor(`document.body.innerText.includes('Invalid email or password.')`, 'old password rejected')
+check(true, 'the old password no longer works')
+await type('Password', newPassword)
+await click('Enter Thread')
+await waitFor(`location.pathname === '/'`, 'new password → home')
+check(true, 'the new password signs in')
+await click('Sign out')
+await waitFor(`location.pathname === '/sign-in'`, 'sign out')
+
+console.log('13. Used link and direct visits')
+await go(resetLink)
+await waitFor(`location.pathname === '/sign-in' && document.body.innerText.includes("That link didn't work")`, 'used link → sign-in error', 10000)
+check(true, 'a used reset link explains itself on sign-in')
+await shot('14-reset-link-used')
+await go(APP + '/reset-password')
+await waitFor(`location.pathname === '/sign-in'`, '/reset-password signed out → /sign-in')
+check(true, 'signed-out visitor is sent from /reset-password to /sign-in')
+
+console.log('14. Reset for a user who has not onboarded')
+await go(APP + '/forgot-password')
+await type('Email', ben.email)
+await click('Send reset link')
+await waitFor(`document.body.innerText.includes('If an account exists')`, 'ben reset sent')
+await go(await latestLink(ben.email, 'Reset'))
+await waitFor(`location.pathname === '/reset-password'`, 'ben reset link', 10000)
+check(true, 'reset link is not swallowed by the onboarding redirect')
+await type('New password', 'brand-new-horse-2')
+await type('Confirm password', 'brand-new-horse-2')
+await click('Save password')
+await waitFor(`location.pathname === '/onboarding'`, 'ben → onboarding', 10000)
+check(true, 'after the reset, a user without a username continues to onboarding')
+
+console.log('15. Mobile layout of the new screens')
+await viewport(390, 844, true)
+await click('Sign out').catch(() => {})
+await go(APP + '/sign-in')
+await waitFor(`location.pathname === '/sign-in'`, 'signed out')
+await go(APP + '/forgot-password')
+await shot('15-forgot-password-mobile')
+check(!(await evaluate('document.documentElement.scrollWidth > window.innerWidth')), 'forgot-password has no horizontal scroll at 390px')
 
 ws.close()
 console.log(process.exitCode ? 'Some checks FAILED' : 'All checks passed')
