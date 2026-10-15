@@ -1,16 +1,68 @@
-# React + Vite
+# Thread
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+A private, friends-only chat app built with React, TypeScript, Vite and Supabase.
+The plan, rules and data model are in `Chat_App_Project_Specification.docx`; UI
+mockups are in `design/`.
 
-Currently, two official plugins are available:
+## Requirements
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- Node.js and npm
+- Docker Desktop (running) for the local Supabase stack
 
-## React Compiler
+## Setup
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+```sh
+npm install
+npm run db:start      # starts local Supabase in Docker and applies all migrations
+```
 
-## Expanding the Oxlint configuration
+`db:start` prints the local API URL and publishable key. Put them in
+`.env.development.local` (see Environment below), then:
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+```sh
+npm run dev
+```
+
+## Environment
+
+There are two Supabase environments, and Vite picks the file by mode:
+
+| File | Used by | Points at |
+|---|---|---|
+| `.env.development.local` | `npm run dev` | local stack (`http://127.0.0.1:54321`) |
+| `.env.production.local` | `npm run build` / `npm run preview` | hosted project |
+
+Both files are git-ignored and contain:
+
+```sh
+VITE_SUPABASE_URL=...
+VITE_SUPABASE_PUBLISHABLE_KEY=...
+```
+
+Only the publishable key belongs in the frontend. Never put the secret
+(service-role) key in these files or in the repository.
+
+## Database
+
+Schema changes are SQL migrations in `supabase/migrations`, applied in order.
+Migrations only move forward: to undo something, write a new migration.
+
+```sh
+npx supabase migration new <name>   # create a migration file
+npm run db:reset                    # rebuild the local database from all migrations
+npm run db:test                     # run pgTAP tests in supabase/tests
+npm run db:types                    # regenerate src/lib/database.types.ts
+npx supabase db push                # apply new migrations to the hosted project
+```
+
+Test new migrations locally (`db:reset` + `db:test`) before pushing them.
+
+## Scripts
+
+| Script | What it does |
+|---|---|
+| `npm run dev` | Dev server against the local stack |
+| `npm run build` | Type-check, then production build into `dist/` |
+| `npm run typecheck` | Type-check only |
+| `npm run lint` | Oxlint |
+| `npm run db:stop` | Stop the local stack |
