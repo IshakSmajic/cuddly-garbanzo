@@ -1,4 +1,4 @@
-# Thread
+# Thread Buddies
 
 A private, friends-only chat app built with React, TypeScript, Vite and Supabase.
 The plan, rules and data model are in `Chat_App_Project_Specification.docx`; UI

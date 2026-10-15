@@ -1,4 +1,4 @@
-# Thread — progress and handoff
+# Thread Buddies — progress and handoff
 
 Last updated: 15 October 2026, after milestone 2b.
 
@@ -184,13 +184,16 @@ Accepted by the developer (spec section 11):
 Also decided: **Vercel** hosting on a `*.vercel.app` address and **Gmail
 SMTP** for auth emails, no domain (setup in open items 2–3).
 
+Also decided: **public avatar bucket** (milestone 3).
+
 Recommendations not yet explicitly confirmed (fine to follow, but mention them
 when they come up): Supabase Realtime before a custom WebSocket server; prefix
-username search (min 3 chars, max 20 results); public avatar bucket, 2 MB,
+username search (min 3 chars, max 20 results); avatar limits 2 MB,
 JPEG/PNG/WebP; no request expiry.
 
-Design: app name **Thread**; font **Manrope**; accent **#f55252**; blacks and
-whites for everything else (tokens in `src/index.css`). Only the sign-in
+Design: app name **Thread Buddies** (renamed from "Thread" on 15 Oct 2026;
+the UI rename is part of milestone 3); font **Manrope**; accent
+**#f55252**; blacks and whites for everything else (tokens in `src/index.css`). Only the sign-in
 screen exists as a design (`design/sign-in.png`); other screens are designed
 by Claude to match it.
 
@@ -212,7 +215,7 @@ by Claude to match it.
    - Supabase dashboard → Authentication → Emails → SMTP Settings → enable
      custom SMTP: host `smtp.gmail.com`, port `587`, username = the full
      Gmail address, password = the 16-character app password (no spaces),
-     sender email = the same address, sender name `Thread`.
+     sender email = the same address, sender name `Thread Buddies`.
    - Then raise the email rate limit under Authentication → Rate Limits if
      needed (custom SMTP starts at a low default).
    - The app password is a secret: it goes only in the Supabase dashboard,

@@ -1,4 +1,4 @@
-# Thread
+# Thread Buddies
 
 A private, friends-only chat app (React + TypeScript + Vite, Supabase). The
 developer is building it to learn WebSockets, relational database design,

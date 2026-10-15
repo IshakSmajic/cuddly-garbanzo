@@ -177,11 +177,12 @@ b('**Username rules.** Decision: 3–20 characters, lowercase a–z, 0–9 and u
 b('**Re-request policy.** Decision: a new request is allowed after a decline or an unfriend, subject to rate limiting; blocking is the way to stop someone permanently.')
 b('**Blocking in the MVP.** Decision: yes, as described in section 3.')
 b('**Profile visibility.** Decision: every profile field is visible to any signed-in user, so `profiles` holds no private fields.')
+b('**Avatar bucket.** Decision: public bucket (anyone with an image URL can view it; object names are random). Limits: 2 MB maximum, JPEG, PNG or WebP.')
+b('**App name.** Decision: Thread Buddies (earlier working name: Thread).')
 b('**Hosting and email.** Decision: Vercel on a free `*.vercel.app` address, and Gmail SMTP for auth emails; no domain is needed. The expected scale is two to four people.')
 h2('Can wait')
 b('**Supabase Realtime versus a custom WebSocket server.** Recommendation: Supabase Realtime for the MVP; a custom server later as a learning exercise.')
 b('**Search behaviour.** Recommendation: prefix match on username, minimum 3 characters, at most 20 results.')
-b('**Avatar bucket and limits.** Recommendation: public bucket, 2 MB maximum, JPEG, PNG or WebP.')
 b('**Request expiration.** Recommendation: none for the MVP.')
 p('Resolved in this revision: frontend tooling (React + TypeScript with Vite), when a conversation is created (on acceptance), and the direct-conversation pair schema (`direct_conversations`).')
 
@@ -192,7 +193,7 @@ h1('Revision history')
 b('**v2, 15 October 2026:** resolved contradictions (profile provisioning, friendship state, conversation type), added a concrete schema with blocking and idempotent sends, defined write paths and the recovery strategy, documented the current repository state, sorted open decisions by urgency with recommendations, and fixed numbered lists so each one starts at 1.')
 b('**v2.1, 15 October 2026:** the developer accepted the five schema decisions in section 11 and the rules in section 3; section 10 updated after milestone 1.')
 b('**v2.2, 15 October 2026:** status and section 10 updated after milestone 2.')
-b('**v2.3, 15 October 2026:** hosting changed from Netlify to Vercel and email from Resend to Gmail SMTP; no custom domain needed.')
+b('**v2.3, 15 October 2026:** hosting changed from Netlify to Vercel and email from Resend to Gmail SMTP; no custom domain needed. App named Thread Buddies; public avatar bucket decided.')
 b('**v1:** initial specification.')
 
 # ---------------------------------------------------------------- render
