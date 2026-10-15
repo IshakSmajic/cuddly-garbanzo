@@ -1,5 +1,6 @@
 import { Navigate, Outlet } from 'react-router'
 import { FullScreenMessage } from '../components/FullScreenMessage.tsx'
+import { supabase } from '../lib/supabase.ts'
 import { redirectFor, type Area, type AuthState } from './access.ts'
 import { useAuth } from './context.ts'
 
@@ -14,7 +15,11 @@ export function Gate({ area }: { area: Area }) {
       <FullScreenMessage
         title="Couldn't load your profile."
         detail={profileError}
-        action={{ label: 'Try again', onClick: () => void refreshProfile() }}
+        actions={[
+          { label: 'Try again', onClick: () => void refreshProfile() },
+          // Never leave someone stuck here: they can always start over.
+          { label: 'Sign out', onClick: () => void supabase.auth.signOut({ scope: 'local' }) },
+        ]}
       />
     )
   }

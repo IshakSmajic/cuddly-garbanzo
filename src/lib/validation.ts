@@ -4,6 +4,7 @@
 export const USERNAME_MIN = 3
 export const USERNAME_MAX = 20
 export const DISPLAY_NAME_MAX = 50
+export const BIO_MAX = 280
 export const PASSWORD_MIN = 8 // matches auth.minimum_password_length in supabase/config.toml
 
 /** Lowercases as the user types, since usernames are stored lowercase. */
@@ -23,6 +24,16 @@ export function displayNameError(name: string): string | null {
   if (trimmed.length === 0) return 'Enter a display name.'
   // Count characters the way PostgreSQL's char_length does (code points).
   if ([...trimmed].length > DISPLAY_NAME_MAX) return `At most ${DISPLAY_NAME_MAX} characters.`
+  return null
+}
+
+/** Counted on the trimmed text, which is what gets saved. */
+export function bioLength(bio: string): number {
+  return [...bio.trim()].length
+}
+
+export function bioError(bio: string): string | null {
+  if (bioLength(bio) > BIO_MAX) return `At most ${BIO_MAX} characters.`
   return null
 }
 

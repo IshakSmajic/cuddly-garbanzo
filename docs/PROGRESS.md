@@ -1,6 +1,7 @@
 # Thread Buddies — progress and handoff
 
-Last updated: 15 October 2026, after milestone 2b.
+Last updated: 15 October 2026, after milestone 3 (built and checked; not yet
+committed).
 
 This file is the running record of the project: what is done, what is live,
 what was decided, and what comes next. Read it at the start of a session and
@@ -15,8 +16,8 @@ are in `CLAUDE.md`.
 | 1 | Foundation: TypeScript, local Supabase, remove demo | Done (commit `14b28b3`) |
 | 2 | Auth: sign up, confirm email, sign in, onboarding, protected routes | Done (commit `c2409e4`) |
 | 2b | Password reset (follow-up to milestone 2) | Done (commit "Milestone 2b: password reset") |
-| 3 | Profiles and avatars: profile editor, avatar upload/replace/remove | **Next.** Plan outline below |
-| 4 | User discovery and requests: search, send/cancel/accept/decline, blocking | Not started |
+| 3 | Profiles and avatars: profile editor, avatar upload/replace/remove, rename to Thread Buddies | Done (branch `milestone-3-profiles`, awaiting commit) |
+| 4 | User discovery and requests: search, send/cancel/accept/decline, blocking | **Next.** Plan outline below |
 | 5 | Friendships: friend list, unfriend, accept creates the conversation | Not started |
 | 6 | Direct messaging persistence: history, friends-only sending, paging | Not started |
 | 7 | Realtime messaging: live delivery, reconnect recovery, dedupe | Not started |
@@ -41,16 +42,28 @@ Milestones 1–7 make the app usable by friends; 8–10 improve it.
 
 ## Current state
 
-### Repository (`main` on GitHub: IshakSmajic/cuddly-garbanzo)
+### Repository (`main` on GitHub: IshakSmajic/treads-buddies)
 
 - React 19 + TypeScript 7 (strict) + Vite 8, React Router 8, Oxlint, Vitest.
 - Supabase JS client, typed from the generated `src/lib/database.types.ts`.
 - Manrope (self-hosted via `@fontsource-variable/manrope`), accent `#f55252`,
   dark theme tokens in `src/index.css`.
+- The GitHub repo was renamed from `cuddly-garbanzo`; the Supabase
+  `project_id` in `config.toml` is still `cuddly-garbanzo`, so local Docker
+  containers are named `supabase_*_cuddly-garbanzo`. Harmless.
+
+### Development machine (since 15 Oct 2026)
+
+- Arch Linux (moved from macOS). Docker installed and enabled; the user is in
+  the `docker` group. Chrome at `/usr/bin/google-chrome-stable`.
+- `.env.development.local` recreated for the local stack.
+  **`.env.production.local` is missing on this machine**: recreate it from the
+  hosted project's URL and publishable key before deploying (a build without
+  it succeeds but the app throws on start).
 
 ### Local Supabase (Docker, 12 containers)
 
-- All three migrations applied. Auth settings in `supabase/config.toml`:
+- All four migrations applied, including the `avatars` storage bucket. Auth settings in `supabase/config.toml`:
   email confirmation on, minimum password 8, site URL `http://localhost:5173`,
   redirect allow-list (exact URLs) `http://localhost:5173`,
   `http://localhost:5173/reset-password` and the same two on `127.0.0.1`,
@@ -64,7 +77,7 @@ Milestones 1–7 make the app usable by friends; 8–10 improve it.
 
 - Linked to the repo. Has migrations 1 and 2 only, so the public schema is
   **empty**. The demo tables and the demo accounts (alice/bob) are deleted.
-- **Not yet applied:** the profiles migration, the auth settings (site URL,
+- **Not yet applied:** the profiles and avatars migrations, the auth settings (site URL,
   redirect URLs including `/reset-password`, confirm email, password length,
   secure password change, password-changed notification). Custom SMTP
   (Gmail) **is** configured (open item 2).
@@ -168,6 +181,59 @@ Behaviour worth knowing:
 - Error codes handled: `same_password`, `weak_password`,
   `reauthentication_needed`, rate limits.
 
+### Milestone 3: profiles, avatars and the rename
+
+**Database** (`supabase/migrations/20261015203116_avatars.sql`):
+
+- Bucket `avatars`, created in the migration (not `config.toml`, which is
+  local only), so `db push` creates it on hosted too: public, 2 MB,
+  `image/jpeg`, `image/png`, `image/webp`.
+- Storage policies on `storage.objects` (authenticated, bucket `avatars`,
+  first folder = `auth.uid()`): insert, select, delete. **No update policy**:
+  every upload gets a new random name, so nothing is overwritten and caching
+  is never stale. Select is limited to your own folder, so nobody can list
+  others' files; public URLs need no policy.
+- `set_avatar(new_path)` and `remove_avatar()`: security definer,
+  `search_path = ''`, executable by `authenticated` only. `set_avatar` checks
+  the path is `{uid}/{uuid}.(jpg|png|webp)` and that the file exists with
+  `owner_id` = the caller, locks the profile row (`for update`, so concurrent
+  changes can't both read the same old path), sets it and returns the old
+  path. `avatar_path` still has no client update grant.
+- Tests: `supabase/tests/database/avatars.test.sql` (24 checks). Direct SQL
+  deletes on `storage.objects` are blocked by Supabase's `protect_delete`
+  trigger; the test sets `storage.allow_delete_query` to test the policy.
+  The generated types say these functions return `string`; they return
+  `null` when there was no previous avatar.
+
+**Frontend:**
+
+| File | Role |
+|---|---|
+| `src/pages/ProfileSettings.tsx` | `/settings/profile` (app area): username, display name, bio (counter), avatar editor |
+| `src/lib/avatar.ts` | Pure rules: accepted types, 15 MB input limit, `initials`, `centreSquare` (+ tests) |
+| `src/lib/avatarUpload.ts` | Crop to a 512 px square, re-encode WebP (JPEG fallback), upload → `set_avatar` → delete old; `removeAvatar` |
+| `src/lib/useUsernameCheck.ts` | Availability hook shared by onboarding and the editor; your own name is never "taken" |
+| `src/lib/validation.ts` | `BIO_MAX`, `bioError`, `bioLength` (+ tests) |
+| `src/components/` | `Avatar` (picture or initials), `AppHeader` (logo, avatar + name → settings, sign out), `TextAreaField` |
+
+Behaviour worth knowing:
+
+- Re-encoding in the browser strips EXIF metadata (phone photos can carry GPS
+  location) and keeps uploads small; the bucket limits are the real check.
+  The browser-reported type can be faked; content checking stays deferred.
+- Replace order: upload → `set_avatar` (on failure the new file is deleted)
+  → delete the old file (on failure an unused file is left; harmless).
+- Empty bio is stored as null; bio and display name are trimmed.
+- Fix to milestone 2: a browser holding the token of a deleted account
+  (e.g. after `db:reset`) used to be stuck on "Couldn't load your profile"
+  on every page. A missing profile row now means the account is gone, so
+  `AuthProvider` signs out locally; the error screen also offers Sign out.
+- Rename: logo, page title, sign-in/sign-up text, "password changed" email
+  subject. The sign-in button says "Enter Thread Buddies".
+- e2e: 51 checks (new sections 16–18: editor, avatars, mobile). `run.sh`
+  finds Chrome on Linux or macOS (or `CHROME=...`). Fixed a race where the
+  test navigated before sign-out had finished.
+
 ## Decisions
 
 Accepted by the developer (spec section 11):
@@ -184,16 +250,15 @@ Accepted by the developer (spec section 11):
 Also decided: **Vercel** hosting on a `*.vercel.app` address and **Gmail
 SMTP** for auth emails, no domain (setup in open items 2–3).
 
-Also decided: **public avatar bucket** (milestone 3).
+Also decided: **public avatar bucket** with 2 MB, JPEG/PNG/WebP (milestone 3).
 
 Recommendations not yet explicitly confirmed (fine to follow, but mention them
 when they come up): Supabase Realtime before a custom WebSocket server; prefix
-username search (min 3 chars, max 20 results); avatar limits 2 MB,
-JPEG/PNG/WebP; no request expiry.
+username search (min 3 chars, max 20 results); no request expiry.
 
-Design: app name **Thread Buddies** (renamed from "Thread" on 15 Oct 2026;
-the UI rename is part of milestone 3); font **Manrope**; accent
-**#f55252**; blacks and whites for everything else (tokens in `src/index.css`). Only the sign-in
+Design: app name **Thread Buddies** (renamed from "Thread" on 15 Oct 2026,
+in the UI since milestone 3); font **Manrope**; accent **#f55252**; blacks
+and whites for everything else (tokens in `src/index.css`). Only the sign-in
 screen exists as a design (`design/sign-in.png`); other screens are designed
 by Claude to match it.
 
@@ -235,37 +300,41 @@ by Claude to match it.
      `<address>/reset-password` (add a wildcard only if preview deploys
      should be able to sign in).
    Spec sections 2, 4 and 9 updated (spec v2.3).
-4. **Hosted project setup** (at deployment): push the pending migrations,
-   apply the auth settings, configure SMTP. Ask first.
-5. Bundle is ~540 kB (157 kB gzipped). Fine for now; code-split later.
+4. **Hosted project setup** (at deployment): push the pending migrations
+   (profiles, avatars), apply the auth settings. SMTP is done. Ask first.
+5. Bundle is ~261 kB (83 kB gzipped). Fine for now; code-split later.
 6. Accessibility note, left as designed: white text on `#f55252` is about
    3.2:1 contrast, below 4.5:1. Near-black text on the red would pass.
+7. **Leftover avatar files.** A failed delete of the old file leaves an
+   unused object; so will account deletion (profiles cascade, Storage
+   objects don't). SQL can't delete Storage files, so cleanup needs an Edge
+   Function (list files not referenced by any `avatar_path`). Rare and tiny at
+   this scale; handle with account deletion or milestone 10.
 
 ## Next phase
 
-### Milestone 3: profiles and avatars (per spec section 5)
+### Milestone 4: user discovery and requests (per spec sections 3 and 5)
 
 Plan outline to present for approval:
 
-- **Profile editor** page (`/settings/profile` or similar): username (with the
-  same availability check; changeable per decision), display name, bio.
-- **Storage:** bucket `avatars` (public, if the recommendation is confirmed),
-  2 MB limit, `image/jpeg`, `image/png`, `image/webp` set as bucket limits.
-  Objects at `{user_id}/<random>.<ext>`. Storage policies on
-  `storage.objects`: insert/update/delete only where the first path segment
-  equals `auth.uid()` (`storage.foldername(name)[1]`).
-- **`avatar_path`:** clients cannot update it directly (by design). Add a
-  security-definer function, e.g. `set_avatar(path text)`, that checks the
-  path starts with the caller's id and the object exists, then sets it. Or
-  grant the column with a policy check; explain the trade-off.
-- **Replace order** (Storage and Postgres don't share a transaction): upload
-  new object → update `avatar_path` → delete old object. Plan orphan cleanup.
-- **Remove avatar:** clear `avatar_path`, then delete the object.
-- Show avatars in the home header; fallback initials when none.
-- **Tests:** pgTAP for the function and storage policies (other users can't
-  write in your folder); e2e for upload/replace/remove.
-- Bucket settings check the browser-reported type only; real content
-  checking (an Edge Function) stays deferred, per the spec.
+- **Tables** from spec section 5: `friend_requests` (history kept; partial
+  unique index: at most one pending request per unordered pair), `blocks`.
+  Clients get no insert/update/delete; reads limited by RLS to rows you are
+  part of.
+- **Functions** (security definer, `search_path = ''`): `send_friend_request`,
+  `cancel_friend_request`, `respond_to_friend_request` (decline here;
+  accept creates the friendship in milestone 5, or both together; decide in
+  the plan), `block_user` / unblock. Status transitions enforced inside
+  them; re-requests after a decline allowed but rate-limited (decided);
+  blocking stops requests both ways and hides users from search.
+- **Search:** prefix match on username, min 3 chars, max 20 results
+  (recommendation, confirm). Exclude yourself and anyone in a block with you.
+  Consider an index for prefix search (`text_pattern_ops`).
+- **UI:** a find-friends screen, a requests list (incoming/outgoing) with
+  accept/decline/cancel, block from a profile.
+- **Tests:** pgTAP for every transition, the pair uniqueness in both
+  directions, blocks, rate limit, and that clients can't write the tables
+  directly; e2e for search → request → accept/decline/cancel → block.
 
 ## Tooling and gotchas
 
@@ -287,15 +356,19 @@ Plan outline to present for approval:
   (`createBrowserRouter`, `RouterProvider`, `Navigate`, `Outlet`, …).
 - **TypeScript 7** (the native compiler) is installed; `tsc -b` works.
 - **Browser checks:** `npm run test:e2e` runs `scripts/e2e/run.sh`, which
-  starts Vite on 5173 and headless Chrome (installed at
-  `/Applications/Google Chrome.app`), then `walkthrough.mjs`. Screenshots go
+  starts Vite on 5173 (stop `npm run dev` first; the port must be free) and
+  headless Chrome (found on Linux or macOS, or set `CHROME=`), then
+  `walkthrough.mjs`. File inputs are driven with CDP `DOM.setFileInputFiles`;
+  test images are generated in the script. Screenshots go
   to `scripts/e2e/shots/`. It reads confirmation links through Mailpit's API.
-  Run `npm run db:reset` afterwards to clear the test accounts. Emails are
+  It leaves its test accounts behind (harmless). `npm run db:reset` clears
+  them but **also deletes any account the developer made by hand**; don't
+  run it without saying so. (A browser still signed in to a deleted account
+  is now signed out automatically; see milestone 3.) Emails are
   found by recipient and subject (`latestLink(email, 'Confirm' | 'Reset')`).
   The script also calls the Auth API directly (a second "device"), reading
   the URL and key from `.env.development.local`.
 - **The spec** is generated: edit the content in `scripts/spec/build_spec.py`
-  and run `npm run spec:build`. Don't hand-edit the `.docx`. macOS has only
-  Python 3.9 and no Word/LibreOffice/pandoc; preview with
-  `qlmanage -t -s 1000 -o <dir> Chat_App_Project_Specification.docx` (first
-  page only) or `textutil -convert txt -stdout <file>`.
+  and run `npm run spec:build`. Don't hand-edit the `.docx`. It needs only
+  the Python standard library. (On the old Mac, preview with `qlmanage` or
+  `textutil`; on Linux there is no previewer installed.)

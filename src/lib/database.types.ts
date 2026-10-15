@@ -59,7 +59,8 @@ export type Database = {
       [_ in never]: never;
     };
     Functions: {
-      [_ in never]: never;
+      remove_avatar: { Args: Record<PropertyKey, never>; Returns: string };
+      set_avatar: { Args: { new_path: string }; Returns: string };
     };
     Enums: {
       [_ in never]: never;

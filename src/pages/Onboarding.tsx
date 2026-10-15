@@ -1,66 +1,30 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import { useAuth } from '../auth/context.ts'
 import { AuthLayout } from '../components/AuthLayout.tsx'
 import { Button } from '../components/Button.tsx'
 import { Field } from '../components/Field.tsx'
 import { supabase } from '../lib/supabase.ts'
+import { availabilityHint, useUsernameCheck } from '../lib/useUsernameCheck.ts'
 import {
   DISPLAY_NAME_MAX,
   displayNameError,
   normalizeUsername,
-  usernameError,
   USERNAME_MAX,
 } from '../lib/validation.ts'
-
-type Availability = 'idle' | 'checking' | 'available' | 'taken' | 'error'
 
 export function Onboarding() {
   const { session, refreshProfile } = useAuth()
   const [username, setUsername] = useState('')
   const [displayName, setDisplayName] = useState('')
-  // Result of the last availability lookup, tagged with the name it was for.
-  const [lookup, setLookup] = useState<{ username: string; result: Availability } | null>(null)
+  const { formatError, availability, markTaken } = useUsernameCheck(username)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  const formatError = username ? usernameError(username) : null
   const nameError = displayName ? displayNameError(displayName) : null
-
-  const shouldCheck = username !== '' && !formatError
-  const availability: Availability = !shouldCheck
-    ? 'idle'
-    : lookup?.username === username
-      ? lookup.result
-      : 'checking'
-
-  // Check availability once typing pauses. This is only a hint: two people
-  // can still race for the same name, and the UNIQUE constraint decides.
-  useEffect(() => {
-    if (!shouldCheck) return
-    let stale = false
-    const timer = setTimeout(async () => {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('user_id')
-        .eq('username', username)
-        .maybeSingle()
-      if (!stale) setLookup({ username, result: error ? 'error' : data ? 'taken' : 'available' })
-    }, 400)
-    return () => {
-      stale = true
-      clearTimeout(timer)
-    }
-  }, [username, shouldCheck])
 
   const usernameHint =
     formatError ??
-    {
-      idle: 'Letters, numbers and underscores. You can change it later.',
-      checking: 'Checking…',
-      available: `@${username} is available.`,
-      taken: `@${username} is taken.`,
-      error: "Couldn't check availability.",
-    }[availability]
+    availabilityHint(username, availability, 'Letters, numbers and underscores. You can change it later.')
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -83,7 +47,7 @@ export function Onboarding() {
     if (error) {
       setSubmitting(false)
       if (error.code === '23505') {
-        setLookup({ username, result: 'taken' }) // someone claimed it since the check
+        markTaken(username) // someone claimed it since the check
       } else {
         setError('Could not save your profile. Please try again.')
       }

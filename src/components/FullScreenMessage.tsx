@@ -3,10 +3,10 @@ import { Logo } from './Logo.tsx'
 type Props = {
   title: string
   detail?: string
-  action?: { label: string; onClick: () => void }
+  actions?: { label: string; onClick: () => void }[]
 }
 
-export function FullScreenMessage({ title, detail, action }: Props) {
+export function FullScreenMessage({ title, detail, actions = [] }: Props) {
   return (
     <main className="fullscreen">
       <Logo />
@@ -14,10 +14,14 @@ export function FullScreenMessage({ title, detail, action }: Props) {
         {title}
       </p>
       {detail && <p className="fullscreen-detail">{detail}</p>}
-      {action && (
-        <button className="link-button" onClick={action.onClick}>
-          {action.label}
-        </button>
+      {actions.length > 0 && (
+        <div className="fullscreen-actions">
+          {actions.map((action) => (
+            <button key={action.label} className="link-button" onClick={action.onClick}>
+              {action.label}
+            </button>
+          ))}
+        </div>
       )}
     </main>
   )

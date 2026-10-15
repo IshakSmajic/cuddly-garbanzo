@@ -88,7 +88,7 @@ export function SignUp() {
         </Button>
       </form>
       <p className="auth-switch">
-        Already on Thread? <Link to="/sign-in">Sign in</Link>
+        Already on Thread Buddies? <Link to="/sign-in">Sign in</Link>
       </p>
     </AuthLayout>
   )

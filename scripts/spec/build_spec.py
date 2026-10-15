@@ -32,7 +32,7 @@ def brk(): C.append(('break', None))
 
 # ---------------------------------------------------------------- content
 title('Chat App — Project Specification for Claude')
-p('**Status:** Revised draft v2.3, 15 October 2026. Milestones 1, 2 and 2b are complete; see docs/PROGRESS.md in the repository for detailed progress.')
+p('**Status:** Revised draft v2.4, 15 October 2026. Milestones 1, 2, 2b and 3 are complete; see docs/PROGRESS.md in the repository for detailed progress.')
 p('**Purpose:** Build a real-time, friends-only chat application while learning WebSockets, relational database design, authentication, and secure application architecture.')
 
 h1('1. Project goals')
@@ -165,10 +165,10 @@ n('**Release and mobile preparation:** Vercel deployment and Gmail SMTP setup, s
 p('For each milestone, Claude should present: scope, data model changes, key security risks, tests, acceptance checklist, and explanations of concepts the developer should understand. A milestone\'s tests must pass before the next one starts. Pause for approval before implementing the next milestone.')
 
 h1('10. Current repository state')
-b('Milestones 1 (foundation) and 2 (auth) are complete and pushed to `main`. Detailed progress, open items and next steps live in `docs/PROGRESS.md`; working rules for Claude are in `CLAUDE.md`.')
-b('Frontend: React + TypeScript (strict) with Vite, React Router, Manrope and the #f55252 accent. Screens: sign in (from `design/sign-in.png`), sign up, check email, onboarding, and a home placeholder.')
-b('Database: `profiles` with username rules, column-level update grants, RLS and a sign-up trigger. Tests: pgTAP in `supabase/tests/database`, Vitest in `src`.')
-b('A local Supabase stack runs in Docker; `npm run dev` uses it and Mailpit catches its emails. The hosted project has only the first two migrations: the profiles migration, auth settings and an email sender are applied at deployment.')
+b('Milestones 1 (foundation), 2 (auth, including password reset) and 3 (profiles and avatars) are complete. Detailed progress, open items and next steps live in `docs/PROGRESS.md`; working rules for Claude are in `CLAUDE.md`.')
+b('Frontend: React + TypeScript (strict) with Vite, React Router, Manrope and the #f55252 accent. Screens: sign in (from `design/sign-in.png`), sign up, check email, forgot and reset password, onboarding, profile settings with avatar upload, and a home placeholder.')
+b('Database: `profiles` with username rules, column-level update grants, RLS and a sign-up trigger; a public `avatars` bucket with per-user folder policies and the `set_avatar` and `remove_avatar` functions. Tests: pgTAP in `supabase/tests/database`, Vitest in `src`.')
+b('A local Supabase stack runs in Docker; `npm run dev` uses it and Mailpit catches its emails. The hosted project has only the first two migrations: the profiles and avatars migrations and the auth settings are applied at deployment. Gmail SMTP is already configured there.')
 
 h1('11. Decisions still open')
 h2('Decided (15 October 2026)')
@@ -193,6 +193,7 @@ h1('Revision history')
 b('**v2, 15 October 2026:** resolved contradictions (profile provisioning, friendship state, conversation type), added a concrete schema with blocking and idempotent sends, defined write paths and the recovery strategy, documented the current repository state, sorted open decisions by urgency with recommendations, and fixed numbered lists so each one starts at 1.')
 b('**v2.1, 15 October 2026:** the developer accepted the five schema decisions in section 11 and the rules in section 3; section 10 updated after milestone 1.')
 b('**v2.2, 15 October 2026:** status and section 10 updated after milestone 2.')
+b('**v2.4, 15 October 2026:** status and section 10 updated after milestone 3.')
 b('**v2.3, 15 October 2026:** hosting changed from Netlify to Vercel and email from Resend to Gmail SMTP; no custom domain needed. App named Thread Buddies; public avatar bucket decided.')
 b('**v1:** initial specification.')
 

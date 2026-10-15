@@ -70,11 +70,11 @@ export function SignIn() {
           </p>
         )}
         <Button type="submit" arrow disabled={submitting}>
-          {submitting ? 'Signing in…' : 'Enter Thread'}
+          {submitting ? 'Signing in…' : 'Enter Thread Buddies'}
         </Button>
       </form>
       <p className="auth-switch">
-        New to Thread? <Link to="/sign-up">Create an account</Link>
+        New to Thread Buddies? <Link to="/sign-up">Create an account</Link>
       </p>
     </AuthLayout>
   )

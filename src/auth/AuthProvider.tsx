@@ -5,17 +5,22 @@ import { AuthContext, type Profile } from './context.ts'
 
 type LoadedProfile = { userId: string; profile: Profile | null; error: string | null }
 
-async function fetchProfile(userId: string): Promise<LoadedProfile> {
+/** null when the account no longer exists (see below). */
+async function fetchProfile(userId: string): Promise<LoadedProfile | null> {
   const { data, error } = await supabase
     .from('profiles')
     .select('*')
     .eq('user_id', userId)
     .maybeSingle()
-  return {
-    userId,
-    profile: data,
-    error: error ? error.message : data ? null : 'Profile not found.',
+  if (!data && !error) {
+    // The sign-up trigger creates the profile in the same transaction as the
+    // account, so a missing row means the account was deleted while this
+    // browser still held its token. Drop the leftover session; 'local' skips
+    // the server call, which would fail for a deleted user anyway.
+    await supabase.auth.signOut({ scope: 'local' })
+    return null
   }
+  return { userId, profile: data, error: error ? error.message : null }
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -43,7 +48,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!userId) return
     let stale = false
     fetchProfile(userId).then((result) => {
-      if (!stale) setLoaded(result)
+      if (!stale && result) setLoaded(result)
     })
     return () => {
       stale = true
@@ -51,7 +56,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [userId])
 
   const refreshProfile = useCallback(async () => {
-    if (userId) setLoaded(await fetchProfile(userId))
+    const result = userId ? await fetchProfile(userId) : null
+    if (result) setLoaded(result)
   }, [userId])
 
   const value = useMemo(() => {

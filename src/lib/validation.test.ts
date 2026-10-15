@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { displayNameError, newPasswordError, normalizeUsername, usernameError } from './validation.ts'
+import { bioError, bioLength, displayNameError, newPasswordError, normalizeUsername, usernameError } from './validation.ts'
 
 describe('normalizeUsername', () => {
   it('lowercases and trims', () => {
@@ -47,5 +47,17 @@ describe('newPasswordError', () => {
 
   it('rejects a mismatched confirmation', () => {
     expect(newPasswordError('correct-horse', 'correct-hors')).toBe("The passwords don't match.")
+  })
+})
+
+describe('bioError', () => {
+  it('allows an empty bio', () => {
+    expect(bioError('')).toBeNull()
+  })
+
+  it('counts code points of the trimmed text, like PostgreSQL', () => {
+    expect(bioLength('  hi  ')).toBe(2)
+    expect(bioError('😀'.repeat(280))).toBeNull()
+    expect(bioError('😀'.repeat(281))).toBe('At most 280 characters.')
   })
 })

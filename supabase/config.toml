@@ -257,7 +257,7 @@ otp_expiry = 3600
 # Uncomment to customize notification email template
 [auth.email.notification.password_changed]
 enabled = true
-subject = "Your Thread password was changed"
+subject = "Your Thread Buddies password was changed"
 # content_path = "./supabase/templates/password_changed_notification.html"
 
 [auth.sms]

@@ -1,8 +1,11 @@
-// Browser walk-through of the auth flow, driving headless Chrome over the
+// Browser walk-through of the auth and profile flows, driving headless Chrome over the
 // DevTools protocol (no extra dependencies). Run it with scripts/e2e/run.sh,
 // which starts the dev server and Chrome first. Needs the local Supabase stack
 // running. Screenshots land in scripts/e2e/shots/ (git-ignored).
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { crc32, deflateSync } from 'node:zlib'
 
 const SHOTS = new URL('./shots/', import.meta.url).pathname
 mkdirSync(SHOTS, { recursive: true })
@@ -85,7 +88,7 @@ async function type(label, value) {
     const l = [...document.querySelectorAll('label')].find(l => l.textContent.trim().toLowerCase() === ${JSON.stringify(label.toLowerCase())});
     if (!l) throw new Error('no label ${label}');
     const input = document.getElementById(l.htmlFor);
-    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    const set = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), 'value').set;
     set.call(input, ${JSON.stringify(value)});
     input.dispatchEvent(new Event('input', { bubbles: true }));
   })()`)
@@ -115,6 +118,57 @@ async function latestLink(email, subject) {
   if (!href) throw new Error(`no link in "${subject}" email for ${email}`)
   return href.replaceAll('&amp;', '&')
 }
+// Picks a file in the page's (hidden) file input, as a user would.
+async function pickFile(filePath) {
+  const { root } = await send('DOM.getDocument')
+  const { nodeId } = await send('DOM.querySelector', { nodeId: root.nodeId, selector: 'input[type=file]' })
+  await send('DOM.setFileInputFiles', { nodeId, files: [filePath] })
+}
+// A gradient PNG of the given size, so the tests need no image files.
+function png(width, height) {
+  const row = width * 3 + 1
+  const raw = Buffer.alloc(row * height)
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++) raw.set([(x * 255) / width, (y * 255) / height, 120], y * row + 1 + x * 3)
+  const chunk = (type, data) => {
+    const body = Buffer.concat([Buffer.from(type), data])
+    const out = Buffer.alloc(body.length + 8)
+    out.writeUInt32BE(data.length, 0)
+    body.copy(out, 4)
+    out.writeUInt32BE(crc32(body), body.length + 4)
+    return out
+  }
+  const header = Buffer.alloc(13)
+  header.writeUInt32BE(width, 0)
+  header.writeUInt32BE(height, 4)
+  header[8] = 8 // bit depth
+  header[9] = 2 // truecolour RGB
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    chunk('IHDR', header),
+    chunk('IDAT', deflateSync(raw)),
+    chunk('IEND', Buffer.alloc(0)),
+  ])
+}
+// The signed-in user's files, listed through the Storage API with their own
+// session (so this also exercises the "see only your own folder" policy).
+async function avatarFiles() {
+  const session = JSON.parse(
+    await evaluate(`localStorage.getItem(Object.keys(localStorage).find(k => /^sb-.*-auth-token$/.test(k)))`),
+  )
+  const res = await fetch(`${env.VITE_SUPABASE_URL}/storage/v1/object/list/avatars`, {
+    method: 'POST',
+    headers: {
+      apikey: env.VITE_SUPABASE_PUBLISHABLE_KEY,
+      authorization: `Bearer ${session.access_token}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ prefix: session.user.id, limit: 100 }),
+  })
+  return (await res.json()).map((file) => file.name)
+}
+const headerAvatarLoaded = `(() => { const i = document.querySelector('.home-bar img.avatar'); return i && i.complete && i.naturalWidth > 0 })()`
+
 function check(cond, label) {
   console.log(`${cond ? 'PASS' : 'FAIL'}  ${label}`)
   if (!cond) process.exitCode = 1
@@ -153,9 +207,10 @@ console.log('3. Unconfirmed sign-in')
 await go(APP + '/sign-in')
 await type('Email', ana.email)
 await type('Password', ana.password)
-await click('Enter Thread')
+await click('Enter Thread Buddies')
 await waitFor(`location.pathname === '/check-email'`, 'unconfirmed → /check-email')
-check((await text()).includes('Confirm your email before signing in'), 'unconfirmed sign-in explains what to do')
+await waitFor(`document.body.innerText.includes('Confirm your email before signing in')`, 'unconfirmed message')
+check(true, 'unconfirmed sign-in explains what to do')
 
 console.log('4. Confirm via email link')
 const link = await latestLink(ana.email, 'Confirm')
@@ -191,12 +246,12 @@ await waitFor(`location.pathname === '/sign-in'`, 'sign out → /sign-in')
 check(true, 'sign out returns to /sign-in')
 await type('Email', ana.email)
 await type('Password', 'wrong-password')
-await click('Enter Thread')
+await click('Enter Thread Buddies')
 await waitFor(`document.body.innerText.includes('Invalid email or password.')`, 'wrong password error')
 check(true, 'wrong password shows a generic error')
 await shot('07-sign-in-error')
 await type('Password', ana.password)
-await click('Enter Thread')
+await click('Enter Thread Buddies')
 await waitFor(`location.pathname === '/'`, 'sign in → home')
 check(true, 'correct password signs in straight to home')
 await click('Sign out')
@@ -283,11 +338,11 @@ await click('Sign out')
 await waitFor(`location.pathname === '/sign-in'`, 'sign out')
 await type('Email', ana.email)
 await type('Password', ana.password)
-await click('Enter Thread')
+await click('Enter Thread Buddies')
 await waitFor(`document.body.innerText.includes('Invalid email or password.')`, 'old password rejected')
 check(true, 'the old password no longer works')
 await type('Password', newPassword)
-await click('Enter Thread')
+await click('Enter Thread Buddies')
 await waitFor(`location.pathname === '/'`, 'new password → home')
 check(true, 'the new password signs in')
 await click('Sign out')
@@ -318,12 +373,116 @@ check(true, 'after the reset, a user without a username continues to onboarding'
 
 console.log('15. Mobile layout of the new screens')
 await viewport(390, 844, true)
-await click('Sign out').catch(() => {})
-await go(APP + '/sign-in')
+// Wait for the sign-out itself; navigating straight away could reload the
+// page before the session is cleared, and the gate would rightly bounce us.
+await click('Sign out')
 await waitFor(`location.pathname === '/sign-in'`, 'signed out')
 await go(APP + '/forgot-password')
 await shot('15-forgot-password-mobile')
 check(!(await evaluate('document.documentElement.scrollWidth > window.innerWidth')), 'forgot-password has no horizontal scroll at 390px')
+
+console.log('16. Profile editor')
+await viewport(1680, 900)
+// Ben finishes onboarding, so there is a second username to collide with.
+const benName = `ben_${run}`.slice(0, 20)
+await go(APP + '/sign-in')
+await type('Email', ben.email)
+await type('Password', 'brand-new-horse-2')
+await click('Enter Thread Buddies')
+await waitFor(`location.pathname === '/onboarding'`, 'ben → onboarding')
+await type('Username', benName)
+await waitFor(`document.body.innerText.includes('is available')`, 'ben name available')
+await type('Display name', 'Ben Test')
+await click('Continue')
+await waitFor(`location.pathname === '/'`, 'ben → home')
+await click('Sign out')
+await waitFor(`location.pathname === '/sign-in'`, 'ben sign out')
+
+await type('Email', ana.email)
+await type('Password', newPassword)
+await click('Enter Thread Buddies')
+await waitFor(`location.pathname === '/'`, 'ana → home')
+check(
+  (await evaluate(`document.querySelector('.home-bar .avatar-initials')?.innerText`)) === 'AT',
+  'header shows initials when there is no avatar',
+)
+await shot('16-home-header')
+await evaluate(`document.querySelector('a[href="/settings/profile"]').click()`)
+await waitFor(`location.pathname === '/settings/profile'`, 'header → /settings/profile')
+check(true, 'the header links to the profile editor')
+check(
+  (await evaluate(`document.querySelector('input[autocomplete=username]').value`)) === ana.username,
+  'the editor is filled with the current profile',
+)
+await type('Username', benName)
+await waitFor(`document.body.innerText.includes('is taken')`, 'username taken')
+check(true, "another user's username shows as taken in the editor")
+await type('Username', ana.username)
+await sleep(500)
+check(!(await text()).includes('is taken'), 'your own username is never reported as taken')
+await type('Display name', 'Ana Edited')
+await type('Bio', '  Hello there  ')
+check((await text()).includes('11 / 280'), 'bio counter counts the trimmed text')
+await type('Bio', 'x'.repeat(281))
+await click('Save changes')
+await waitFor(`document.body.innerText.includes('At most 280 characters.')`, 'bio too long')
+check(true, 'a bio over 280 characters is rejected before sending')
+await type('Bio', '  Hello there  ')
+await click('Save changes')
+await waitFor(`document.body.innerText.includes('Saved.')`, 'saved')
+check((await evaluate(`document.querySelector('.home-bar').innerText`)).includes('Ana Edited'), 'the header shows the new display name')
+await shot('17-profile-saved')
+await go(APP + '/settings/profile')
+await waitFor(`document.querySelector('textarea')`, 'editor reloaded')
+check(
+  (await evaluate(`document.querySelector('textarea').value`)) === 'Hello there',
+  'after a reload the bio is stored, trimmed',
+)
+
+console.log('17. Avatars')
+const files = mkdtempSync(join(tmpdir(), 'thread-e2e-'))
+writeFileSync(join(files, 'landscape.png'), png(800, 600))
+writeFileSync(join(files, 'portrait.png'), png(600, 1000))
+writeFileSync(join(files, 'notes.txt'), 'not an image')
+
+await pickFile(join(files, 'notes.txt'))
+await waitFor(`document.body.innerText.includes('Choose a JPEG, PNG or WebP image.')`, 'wrong type error')
+check((await avatarFiles()).length === 0, 'a non-image is refused before anything is uploaded')
+
+await pickFile(join(files, 'landscape.png'))
+await waitFor(headerAvatarLoaded, 'avatar shows in the header', 15000)
+const size = await evaluate(`(() => { const i = document.querySelector('.home-bar img.avatar'); return [i.naturalWidth, i.naturalHeight] })()`)
+check(size[0] === 512 && size[1] === 512, `the upload is cropped and scaled to 512×512 (got ${size.join('×')})`)
+const first = await avatarFiles()
+check(first.length === 1, `exactly one file is stored after the upload (${first.join(', ')})`)
+check(/^[0-9a-f-]{36}\.(webp|jpg)$/.test(first[0] ?? ''), 'the file has a random name')
+check((await text()).includes('Change photo'), 'the button now offers to change the photo')
+await shot('18-avatar-uploaded')
+
+const firstSrc = await evaluate(`document.querySelector('.home-bar img.avatar').src`)
+await pickFile(join(files, 'portrait.png'))
+await waitFor(`${headerAvatarLoaded} && document.querySelector('.home-bar img.avatar').src !== ${JSON.stringify(firstSrc)}`, 'avatar replaced', 15000)
+await sleep(500) // the old file is deleted after the profile changes
+const second = await avatarFiles()
+check(second.length === 1 && second[0] !== first[0], 'replacing stores the new file and deletes the old one')
+
+await click('Remove')
+await waitFor(`!document.querySelector('.home-bar img.avatar')`, 'avatar removed', 10000)
+check(
+  (await evaluate(`document.querySelector('.home-bar .avatar-initials')?.innerText`)) === 'AE',
+  'after removing, the header shows the new initials',
+)
+await sleep(500)
+check((await avatarFiles()).length === 0, 'removing deletes the stored file')
+check(!(await text()).includes('Remove'), 'the remove button disappears')
+
+console.log('18. Profile editor on mobile')
+await pickFile(join(files, 'landscape.png'))
+await waitFor(headerAvatarLoaded, 'avatar for mobile shot', 15000)
+await viewport(390, 844, true)
+await shot('19-profile-mobile')
+check(!(await evaluate('document.documentElement.scrollWidth > window.innerWidth')), 'the profile editor has no horizontal scroll at 390px')
+rmSync(files, { recursive: true, force: true })
 
 ws.close()
 console.log(process.exitCode ? 'Some checks FAILED' : 'All checks passed')

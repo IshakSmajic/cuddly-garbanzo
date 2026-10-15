@@ -5,6 +5,7 @@ import { CheckEmail } from './pages/CheckEmail.tsx'
 import { ForgotPassword } from './pages/ForgotPassword.tsx'
 import { Home } from './pages/Home.tsx'
 import { Onboarding } from './pages/Onboarding.tsx'
+import { ProfileSettings } from './pages/ProfileSettings.tsx'
 import { ResetPassword } from './pages/ResetPassword.tsx'
 import { SignIn } from './pages/SignIn.tsx'
 import { SignUp } from './pages/SignUp.tsx'
@@ -29,7 +30,10 @@ const router = createBrowserRouter([
   },
   {
     element: <Gate area="app" />,
-    children: [{ path: '/', element: <Home /> }],
+    children: [
+      { path: '/', element: <Home /> },
+      { path: '/settings/profile', element: <ProfileSettings /> },
+    ],
   },
   { path: '*', element: <Navigate to="/" replace /> },
 ])
