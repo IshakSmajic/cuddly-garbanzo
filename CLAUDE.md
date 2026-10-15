@@ -22,7 +22,9 @@ Source of truth for product rules and the data model:
   each choice.
 - **Never commit or push unless asked.** When asked: commit on the milestone
   branch, fast-forward `main`, push `main`, delete the merged branch. Never
-  commit `.env*` files.
+  commit `.env*` files. Name commits by the feature added (e.g. "Profile
+  picture functionality and upload"), not the milestone number; the body can
+  say which milestone it belongs to.
 - **Ask before touching the hosted Supabase project** (`supabase db push`,
   auth or SMTP settings). Test migrations locally first.
 - Enforce rules in the database (constraints, RLS, column grants,
