@@ -22,7 +22,7 @@ are in `CLAUDE.md`.
 | 7 | Realtime messaging: live delivery, reconnect recovery, dedupe | Not started |
 | 8 | Chat UX: typing, presence, unread counts, read receipts | Not started |
 | 9 | Media: image messages | Not started |
-| 10 | Release: deploy, security review, mobile polish | Not started |
+| 10 | Release: deploy (Vercel + Gmail SMTP), security review, mobile polish | Not started |
 
 Milestones 1–7 make the app usable by friends; 8–10 improve it.
 
@@ -66,8 +66,8 @@ Milestones 1–7 make the app usable by friends; 8–10 improve it.
   **empty**. The demo tables and the demo accounts (alice/bob) are deleted.
 - **Not yet applied:** the profiles migration, the auth settings (site URL,
   redirect URLs including `/reset-password`, confirm email, password length,
-  secure password change, password-changed notification), and an email
-  sender (SMTP).
+  secure password change, password-changed notification). Custom SMTP
+  (Gmail) **is** configured (open item 2).
   These are done at deployment time, with the developer's go-ahead.
 - No frontend is deployed anywhere yet.
 
@@ -181,6 +181,9 @@ Accepted by the developer (spec section 11):
 - **Blocking:** in the MVP.
 - **Profile visibility:** every profile field visible to any signed-in user.
 
+Also decided: **Vercel** hosting on a `*.vercel.app` address and **Gmail
+SMTP** for auth emails, no domain (setup in open items 2–3).
+
 Recommendations not yet explicitly confirmed (fine to follow, but mention them
 when they come up): Supabase Realtime before a custom WebSocket server; prefix
 username search (min 3 chars, max 20 results); public avatar bucket, 2 MB,
@@ -193,24 +196,42 @@ by Claude to match it.
 
 ## Open items
 
-1. **Password reset on hosted:** add `<live origin>/reset-password` to the
+1. **Password reset on hosted:** add `<vercel address>/reset-password` to the
    hosted redirect allow-list along with the other auth settings (item 4).
-2. **Email delivery for real users.** Supabase sends the emails, but its
-   built-in sender only reaches the Supabase team's own addresses and is
-   heavily rate-limited, so friends need a real mail server:
-   - Now, without a domain: Gmail SMTP with an app password (needs Google
-     2-step verification).
-   - Later: Resend, which needs a domain. The developer plans to buy one
-     (recommended: Cloudflare Registrar; turn on auto-renew and 2FA). Then:
-     add the domain in Resend → copy its DNS records into Cloudflare → enter
-     Resend's SMTP details in Supabase (Authentication → SMTP). No code changes.
-3. **Hosting: Vercel or Netlify.** Undecided. Both free tiers work (Vercel
-   Hobby is personal/non-commercial only, which fits). The spec says Netlify;
-   if Vercel is chosen, update spec section 2, milestone 10 and the README.
-   Either way, deployment needs: a rewrite of all paths to `index.html`
-   (client-side routing), the two `VITE_` env vars in the host's settings,
-   and the hosted Supabase site URL + redirect allow-list set to the live
-   address (a wildcard if preview deploys should work).
+2. **Email delivery: Gmail SMTP (decided 15 Oct 2026).** Supabase's
+   built-in sender only reaches the project team's own addresses, so friends
+   need custom SMTP. The app is for two to four people, so a domain and
+   Resend aren't needed. **Done on the hosted project (15 Oct 2026):**
+   sender `threadbuddiesapp@gmail.com`, name "Thread Buddies", port 587; a
+   test invite was delivered. A `535 BadCredentials` error means the app
+   password was created in a different Google account. Setup steps, for
+   reference:
+   - Create a dedicated Gmail account for the app (its address is the
+     sender friends see), turn on 2-step verification, then create an app
+     password at https://myaccount.google.com/apppasswords.
+   - Supabase dashboard → Authentication → Emails → SMTP Settings → enable
+     custom SMTP: host `smtp.gmail.com`, port `587`, username = the full
+     Gmail address, password = the 16-character app password (no spaces),
+     sender email = the same address, sender name `Thread`.
+   - Then raise the email rate limit under Authentication → Rate Limits if
+     needed (custom SMTP starts at a low default).
+   - The app password is a secret: it goes only in the Supabase dashboard,
+     never in the repo or `.env*` files.
+   Resend + a domain stays an option if the app grows.
+3. **Hosting: Vercel (decided 15 Oct 2026),** free Hobby plan on a
+   `*.vercel.app` address; no domain needed. Setup (milestone 10):
+   - Add `vercel.json` with a rewrite of all paths to `/index.html`
+     (client-side routing).
+   - Import the GitHub repo in Vercel (framework preset: Vite, build
+     `npm run build`, output `dist`).
+   - Add `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` (the same
+     values as `.env.production.local`) in Project → Settings → Environment
+     Variables.
+   - Hosted Supabase → Authentication → URL Configuration: site URL = the
+     `.vercel.app` address; redirect allow-list = that address and
+     `<address>/reset-password` (add a wildcard only if preview deploys
+     should be able to sign in).
+   Spec sections 2, 4 and 9 updated (spec v2.3).
 4. **Hosted project setup** (at deployment): push the pending migrations,
    apply the auth settings, configure SMTP. Ask first.
 5. Bundle is ~540 kB (157 kB gzipped). Fine for now; code-split later.
