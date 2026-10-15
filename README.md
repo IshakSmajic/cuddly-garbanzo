@@ -57,6 +57,12 @@ npx supabase db push                # apply new migrations to the hosted project
 
 Test new migrations locally (`db:reset` + `db:test`) before pushing them.
 
+While the local stack runs:
+
+- Studio (database dashboard): http://127.0.0.1:54323
+- Mailpit (catches every email the local stack sends, including sign-up
+  confirmations): http://127.0.0.1:54324
+
 ## Scripts
 
 | Script | What it does |
@@ -64,5 +70,6 @@ Test new migrations locally (`db:reset` + `db:test`) before pushing them.
 | `npm run dev` | Dev server against the local stack |
 | `npm run build` | Type-check, then production build into `dist/` |
 | `npm run typecheck` | Type-check only |
+| `npm test` | Unit tests (Vitest) |
 | `npm run lint` | Oxlint |
 | `npm run db:stop` | Stop the local stack |

@@ -1,27 +1,37 @@
-import { useEffect, useState } from 'react'
-import { supabase } from './lib/supabase.ts'
+import { createBrowserRouter, Navigate, RouterProvider } from 'react-router'
+import { AuthProvider } from './auth/AuthProvider.tsx'
+import { Gate } from './auth/Gate.tsx'
+import { CheckEmail } from './pages/CheckEmail.tsx'
+import { Home } from './pages/Home.tsx'
+import { Onboarding } from './pages/Onboarding.tsx'
+import { SignIn } from './pages/SignIn.tsx'
+import { SignUp } from './pages/SignUp.tsx'
 
-type Status = 'checking' | 'connected' | 'unreachable'
+const router = createBrowserRouter([
+  {
+    element: <Gate area="guest" />,
+    children: [
+      { path: '/sign-in', element: <SignIn /> },
+      { path: '/sign-up', element: <SignUp /> },
+      { path: '/check-email', element: <CheckEmail /> },
+    ],
+  },
+  {
+    element: <Gate area="onboarding" />,
+    children: [{ path: '/onboarding', element: <Onboarding /> }],
+  },
+  {
+    element: <Gate area="app" />,
+    children: [{ path: '/', element: <Home /> }],
+  },
+  { path: '*', element: <Navigate to="/" replace /> },
+])
 
-// Placeholder until milestone 2 builds the sign-in screen from design/sign-in.png.
 function App() {
-  const [status, setStatus] = useState<Status>('checking')
-
-  useEffect(() => {
-    supabase.auth
-      .getSession()
-      .then(({ error }) => setStatus(error ? 'unreachable' : 'connected'))
-      .catch(() => setStatus('unreachable'))
-  }, [])
-
   return (
-    <main className="placeholder">
-      <h1>Thread</h1>
-      <p>Foundation ready. Sign-in arrives in milestone 2.</p>
-      <p className="status">
-        Supabase: <strong>{status}</strong> ({import.meta.env.VITE_SUPABASE_URL})
-      </p>
-    </main>
+    <AuthProvider>
+      <RouterProvider router={router} />
+    </AuthProvider>
   )
 }
 
