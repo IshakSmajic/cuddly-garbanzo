@@ -508,9 +508,9 @@ by Claude to match it.
    objects don't). SQL can't delete Storage files, so cleanup needs an Edge
    Function (list files not referenced by any `avatar_path`). Rare and tiny at
    this scale; handle with account deletion or milestone 10.
-8. **Git remote URL.** The GitHub repo was renamed to `treads-buddies`, but
-   the Mac's `origin` still points at `cuddly-garbanzo` (GitHub redirects, so
-   it works). Update with
+8. **Git remote URL.** Done on the Mac (16 Oct 2026): `origin` now points at
+   `https://github.com/IshakSmajic/treads-buddies.git`. If another machine
+   still uses the old `cuddly-garbanzo` URL, run
    `git remote set-url origin https://github.com/IshakSmajic/treads-buddies.git`.
 
 ## Next phase
