@@ -1,7 +1,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 
-select plan(24);
+select plan(27);
 
 -- Fixtures -------------------------------------------------------------------
 insert into auth.users (id, email) values
@@ -91,9 +91,9 @@ select throws_ok(
 );
 select throws_ok(
   $$select public.set_avatar('aaaaaaaa-0000-0000-0000-000000000001/55555555-5555-5555-5555-555555555555.webp')$$,
-  'P0002',
+  '22023',
   null,
-  'set_avatar rejects a file that was never uploaded'
+  'set_avatar rejects a file that was never uploaded (22023, so PostgREST answers 400, not 500)'
 );
 select throws_ok(
   $$select public.set_avatar('aaaaaaaa-0000-0000-0000-000000000001/../bbbbbbbb-0000-0000-0000-000000000002/x.webp')$$,
@@ -117,6 +117,16 @@ select is(
   public.set_avatar('aaaaaaaa-0000-0000-0000-000000000001/11111111-1111-1111-1111-11111111aaaa.jpg'),
   'aaaaaaaa-0000-0000-0000-000000000001/11111111-1111-1111-1111-111111111111.webp',
   'replacing returns the old path, so the app can delete that file'
+);
+
+-- The file the profile points at can't be deleted (RLS filters it out, so the
+-- delete changes 0 rows); it would leave a broken avatar.
+delete from storage.objects
+  where name = 'aaaaaaaa-0000-0000-0000-000000000001/11111111-1111-1111-1111-11111111aaaa.jpg';
+select ok(
+  exists (select 1 from storage.objects
+          where name = 'aaaaaaaa-0000-0000-0000-000000000001/11111111-1111-1111-1111-11111111aaaa.jpg'),
+  'the current avatar file cannot be deleted'
 );
 select throws_ok(
   $$update public.profiles set avatar_path = 'anything'
@@ -143,6 +153,15 @@ select is(public.remove_avatar(), null, 'remove_avatar with no avatar is a harml
 delete from storage.objects
   where name = 'aaaaaaaa-0000-0000-0000-000000000001/11111111-1111-1111-1111-111111111111.webp';
 
+-- Once it's no longer the avatar, the previously protected file can go.
+delete from storage.objects
+  where name = 'aaaaaaaa-0000-0000-0000-000000000001/11111111-1111-1111-1111-11111111aaaa.jpg';
+select ok(
+  not exists (select 1 from storage.objects
+              where name = 'aaaaaaaa-0000-0000-0000-000000000001/11111111-1111-1111-1111-11111111aaaa.jpg'),
+  'a file that is no longer the avatar can be deleted'
+);
+
 -- Signed-out visitors ------------------------------------------------------------------
 reset role;
 set local role anon;
@@ -167,6 +186,13 @@ select ok(
   not exists (select 1 from storage.objects
               where name = 'aaaaaaaa-0000-0000-0000-000000000001/11111111-1111-1111-1111-111111111111.webp'),
   'user can delete their own file'
+);
+
+select is(
+  (select array_agg(policyname::text order by policyname) from pg_policies
+   where schemaname = 'storage' and tablename = 'objects' and cmd = 'DELETE'),
+  array['Users delete their own avatar files except the current one'],
+  'only the guarded delete policy exists'
 );
 
 select * from finish();

@@ -1,7 +1,7 @@
 # Thread Buddies — progress and handoff
 
-Last updated: 15 October 2026, after milestone 3 (built and checked; not yet
-committed).
+Last updated: 16 October 2026, after the avatar fixes (follow-up to
+milestone 3, on branch `avatar-fixes`, not yet committed).
 
 This file is the running record of the project: what is done, what is live,
 what was decided, and what comes next. Read it at the start of a session and
@@ -16,7 +16,7 @@ are in `CLAUDE.md`.
 | 1 | Foundation: TypeScript, local Supabase, remove demo | Done (commit `14b28b3`) |
 | 2 | Auth: sign up, confirm email, sign in, onboarding, protected routes | Done (commit `c2409e4`) |
 | 2b | Password reset (follow-up to milestone 2) | Done (commit "Milestone 2b: password reset") |
-| 3 | Profiles and avatars: profile editor, avatar upload/replace/remove, rename to Thread Buddies | Done (branch `milestone-3-profiles`, awaiting commit) |
+| 3 | Profiles and avatars: profile editor, avatar upload/replace/remove, rename to Thread Buddies | Done (commit "Profile picture functionality and upload"); fixes on `avatar-fixes` |
 | 4 | User discovery and requests: search, send/cancel/accept/decline, blocking | **Next.** Plan outline below |
 | 5 | Friendships: friend list, unfriend, accept creates the conversation | Not started |
 | 6 | Direct messaging persistence: history, friends-only sending, paging | Not started |
@@ -52,9 +52,12 @@ Milestones 1–7 make the app usable by friends; 8–10 improve it.
   `project_id` in `config.toml` is still `cuddly-garbanzo`, so local Docker
   containers are named `supabase_*_cuddly-garbanzo`. Harmless.
 
-### Development machine (since 15 Oct 2026)
+### Development machines
 
-- Arch Linux (moved from macOS). Docker installed and enabled; the user is in
+- The developer works from two machines; pull before starting.
+- macOS (the original): Docker Desktop (start it with `open -a Docker`),
+  Chrome in `/Applications`, both `.env*.local` files present.
+- Arch Linux (since 15 Oct 2026): Docker installed and enabled; the user is in
   the `docker` group. Chrome at `/usr/bin/google-chrome-stable`.
 - `.env.development.local` recreated for the local stack.
   **`.env.production.local` is missing on this machine**: recreate it from the
@@ -63,7 +66,8 @@ Milestones 1–7 make the app usable by friends; 8–10 improve it.
 
 ### Local Supabase (Docker, 12 containers)
 
-- All four migrations applied, including the `avatars` storage bucket. Auth settings in `supabase/config.toml`:
+- All five migrations applied, including the `avatars` storage bucket and the
+  avatar fixes. Auth settings in `supabase/config.toml`:
   email confirmation on, minimum password 8, site URL `http://localhost:5173`,
   redirect allow-list (exact URLs) `http://localhost:5173`,
   `http://localhost:5173/reset-password` and the same two on `127.0.0.1`,
@@ -77,7 +81,7 @@ Milestones 1–7 make the app usable by friends; 8–10 improve it.
 
 - Linked to the repo. Has migrations 1 and 2 only, so the public schema is
   **empty**. The demo tables and the demo accounts (alice/bob) are deleted.
-- **Not yet applied:** the profiles and avatars migrations, the auth settings (site URL,
+- **Not yet applied:** the profiles, avatars and avatar-fixes migrations, the auth settings (site URL,
   redirect URLs including `/reset-password`, confirm email, password length,
   secure password change, password-changed notification). Custom SMTP
   (Gmail) **is** configured (open item 2).
@@ -199,7 +203,7 @@ Behaviour worth knowing:
   `owner_id` = the caller, locks the profile row (`for update`, so concurrent
   changes can't both read the same old path), sets it and returns the old
   path. `avatar_path` still has no client update grant.
-- Tests: `supabase/tests/database/avatars.test.sql` (24 checks). Direct SQL
+- Tests: `supabase/tests/database/avatars.test.sql` (24 checks; 27 after the avatar fixes). Direct SQL
   deletes on `storage.objects` are blocked by Supabase's `protect_delete`
   trigger; the test sets `storage.allow_delete_query` to test the policy.
   The generated types say these functions return `string`; they return
@@ -233,6 +237,25 @@ Behaviour worth knowing:
 - e2e: 51 checks (new sections 16–18: editor, avatars, mobile). `run.sh`
   finds Chrome on Linux or macOS (or `CHROME=...`). Fixed a race where the
   test navigated before sign-out had finished.
+
+### Avatar fixes (16 Oct 2026, follow-up to milestone 3)
+
+`supabase/migrations/20261016062346_avatar_fixes.sql`, no frontend changes:
+
+- `set_avatar` reports a missing file with `22023` instead of `P0002`.
+  PostgREST maps `P0` codes other than `P0001` to HTTP 500; `22023` gives 400
+  (checked through the API).
+- The storage delete policy now refuses the file your profile points at
+  (`name is distinct from` your `avatar_path`), so a direct API call can't
+  leave a broken avatar. The app already repoints the profile before
+  deleting, so its flows are unchanged (e2e passes).
+- `avatars.test.sql`: 27 checks (current file protected, deletable once
+  replaced, only the guarded delete policy exists).
+
+Background: milestone 3 was built twice, once on each machine. The pushed
+version was kept; the other one is in a local git stash on the Mac
+("Mac-side Milestone 3 …") and these two fixes were the only things in it
+worth carrying over.
 
 ## Decisions
 
@@ -301,7 +324,7 @@ by Claude to match it.
      should be able to sign in).
    Spec sections 2, 4 and 9 updated (spec v2.3).
 4. **Hosted project setup** (at deployment): push the pending migrations
-   (profiles, avatars), apply the auth settings. SMTP is done. Ask first.
+   (profiles, avatars, avatar fixes), apply the auth settings. SMTP is done. Ask first.
 5. Bundle is ~261 kB (83 kB gzipped). Fine for now; code-split later.
 6. Accessibility note, left as designed: white text on `#f55252` is about
    3.2:1 contrast, below 4.5:1. Near-black text on the red would pass.
@@ -310,6 +333,11 @@ by Claude to match it.
    objects don't). SQL can't delete Storage files, so cleanup needs an Edge
    Function (list files not referenced by any `avatar_path`). Rare and tiny at
    this scale; handle with account deletion or milestone 10.
+
+8. **Git remote URL.** The GitHub repo was renamed to `treads-buddies`, but
+   the Mac's `origin` still points at `cuddly-garbanzo` (GitHub redirects, so
+   it works). Update with
+   `git remote set-url origin https://github.com/IshakSmajic/treads-buddies.git`.
 
 ## Next phase
 
