@@ -54,7 +54,8 @@ Milestones 1–7 make the app usable by friends; 8–10 improve it.
 
 ### Development machines
 
-- The developer works from two machines; pull before starting.
+- The developer works from two machines; pull before starting (except once
+  on Arch, below).
 - macOS (the original): Docker Desktop (start it with `open -a Docker`),
   Chrome in `/Applications`, both `.env*.local` files present.
 - Arch Linux (since 15 Oct 2026): Docker installed and enabled; the user is in
@@ -63,6 +64,53 @@ Milestones 1–7 make the app usable by friends; 8–10 improve it.
   **`.env.production.local` is missing on this machine**: recreate it from the
   hosted project's URL and publishable key before deploying (a build without
   it succeeds but the app throws on start).
+
+### Next session on the Arch machine: catch up after the history rewrite
+
+On 16 Oct 2026 the history on GitHub was rewritten (open item 9) and
+force-pushed. Arch still has the old history, last at `e2f0221` "Commit
+naming rule" (milestone 3). **Do not `git pull`**: it would merge the old
+commits, co-author lines included, back into `main`. Do this once instead:
+
+1. **Check for work that only exists on Arch:**
+   ```sh
+   git status                          # uncommitted changes?
+   git log --oneline origin/main..main # commits not on GitHub?
+   ```
+   If either shows anything, save it first: `git stash -u` for uncommitted
+   changes, `git branch arch-backup` for local commits. They can be
+   re-applied after step 3 (`git stash pop`, or `git cherry-pick` from
+   `arch-backup`).
+2. **Check the remote** points at the renamed repository:
+   ```sh
+   git remote -v
+   # if it still says cuddly-garbanzo:
+   git remote set-url origin https://github.com/IshakSmajic/treads-buddies.git
+   ```
+3. **Replace the old history with GitHub's:**
+   ```sh
+   git fetch origin
+   git switch main
+   git reset --hard origin/main
+   ```
+4. **Verify:** `git log --oneline -3` shows the same newest commits as
+   GitHub, and
+   `git log --format=%B | grep -ci co-authored-by` prints `0`.
+5. **Bring the rest of the setup up to date** (milestones 4 to 8 happened
+   on the Mac):
+   ```sh
+   npm install
+   npm run db:start   # Docker must be running
+   npm run db:reset   # applies the 6 new migrations; deletes local accounts
+   npm run db:test    # all database tests should pass
+   ```
+   `db:reset` is needed because the local database only has migrations up
+   to milestone 3. It also deletes any accounts made by hand on Arch's local
+   stack (test accounts only; the hosted project is untouched).
+6. Optional: delete `arch-backup` once nothing in it is needed
+   (`git branch -D arch-backup`). Then remove this section from the file.
+
+After this, "pull before starting" applies again.
 
 ### Local Supabase (Docker, 12 containers)
 
