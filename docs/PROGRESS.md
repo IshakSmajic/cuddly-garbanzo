@@ -1,7 +1,7 @@
 # Thread Buddies — progress and handoff
 
-Last updated: 16 October 2026, after milestone 6 (built and checked on
-`milestone-6-messages`; not yet committed).
+Last updated: 16 October 2026, after milestone 7 (built and checked on
+`milestone-7-realtime`; not yet committed).
 
 This file is the running record of the project: what is done, what is live,
 what was decided, and what comes next. Read it at the start of a session and
@@ -19,9 +19,9 @@ are in `CLAUDE.md`.
 | 3 | Profiles and avatars: profile editor, avatar upload/replace/remove, rename to Thread Buddies | Done (commits "Profile picture functionality and upload", "Avatar delete guard and error code fix") |
 | 4 | User discovery and requests: search, send/cancel/accept/decline, blocking (+ the `friendships` table) | Done (commit `109b360`, message typo "Fruend") |
 | 5 | Friendships: friend list, unfriend, accept creates the conversation | Done (commit `ce0e4c6`) |
-| 6 | Direct messaging persistence: history, friends-only sending, paging | Built on `milestone-6-messages`, all checks pass; awaiting commit |
-| 7 | Realtime messaging: live delivery, reconnect recovery, dedupe | **Next.** Plan outline below |
-| 8 | Chat UX: typing, presence, unread counts, read receipts | Not started |
+| 6 | Direct messaging persistence: history, friends-only sending, paging | Done (commit `f4c09ce`) |
+| 7 | Realtime messaging: live delivery, reconnect recovery, dedupe | Built on `milestone-7-realtime`, all checks pass; awaiting commit |
+| 8 | Chat UX: typing, presence, unread counts, read receipts | **Next.** Plan outline below |
 | 9 | Media: image messages | Not started |
 | 10 | Release: deploy (Vercel + Gmail SMTP), security review, mobile polish | Not started |
 
@@ -66,7 +66,7 @@ Milestones 1–7 make the app usable by friends; 8–10 improve it.
 
 ### Local Supabase (Docker, 12 containers)
 
-- All eight migrations applied (through `messages`). Auth settings in `supabase/config.toml`:
+- All nine migrations applied (through `realtime`). Auth settings in `supabase/config.toml`:
   email confirmation on, minimum password 8, site URL `http://localhost:5173`,
   redirect allow-list (exact URLs) `http://localhost:5173`,
   `http://localhost:5173/reset-password` and the same two on `127.0.0.1`,
@@ -80,7 +80,7 @@ Milestones 1–7 make the app usable by friends; 8–10 improve it.
 
 - Linked to the repo. Has migrations 1 and 2 only, so the public schema is
   **empty**. The demo tables and the demo accounts (alice/bob) are deleted.
-- **Not yet applied:** the profiles, avatars, avatar-fixes, friend-requests, conversations and messages migrations, the auth settings (site URL,
+- **Not yet applied:** the profiles, avatars, avatar-fixes, friend-requests, conversations, messages and realtime migrations, the auth settings (site URL,
   redirect URLs including `/reset-password`, confirm email, password length,
   secure password change, password-changed notification). Custom SMTP
   (Gmail) **is** configured (open item 2).
@@ -419,6 +419,52 @@ Behaviour worth knowing:
   (`Page.addScriptToEvaluateOnNewDocument`) to drop the *answer* to one send,
   then checks Retry leaves exactly one message in the database.
 
+### Milestone 7: realtime messaging
+
+**Database** (`supabase/migrations/20261016083136_realtime.sql`): adds
+`messages` and `friend_requests` to the `supabase_realtime` publication.
+Nothing else.
+
+- Realtime checks inserts and updates against the subscriber's SELECT policy
+  (it runs `select exists(... where pk = ...)` as the subscriber), so events
+  follow `is_conversation_member` and the request policy.
+- **Deletes can't be checked:** Realtime sends the old primary key to every
+  subscriber of the table. So `friendships`, `conversation_members` and
+  `blocks` (keys are user ids) are never published;
+  `supabase/tests/database/realtime.test.sql` pins the exact list.
+- `npm run db:realtime` (`scripts/db/realtime-rls.mjs`): three real users
+  against the running Realtime service; a member receives a message, an
+  outsider (even filtering by the conversation id) does not; requests reach
+  only their two people.
+
+**Frontend:**
+
+| File | Role |
+|---|---|
+| `src/lib/realtime.ts` | `subscribe()` (one channel per call, `onReady` when changes really flow, `onState` live/reconnecting), `onResume()` (tab visible / back online) |
+| `src/pages/Chat.tsx` | Live inserts for the conversation; catch-up on ready and resume; "Reconnecting…"; `data-live` attribute for tests |
+| `src/pages/Home.tsx` | Live previews and order; reload on accepted requests, unknown conversations and resume |
+| `src/pages/Requests.tsx`, `src/lib/useIncomingCount.ts` | Live requests list and badge |
+| `src/lib/messageRules.ts` | `catchUp()`: merge the newest page, or restart from it when more than a page was missed (+ tests) |
+
+Behaviour worth knowing:
+
+- **`SUBSCRIBED` is not "ready".** The channel joins first; database changes
+  flow only after Realtime registers the subscription in Postgres and sends a
+  `system` message (`extension: postgres_changes, status: ok`). Inserts in
+  between are not delivered, so catch-up runs on that message, not on
+  `SUBSCRIBED`. (Found when the first RLS check sent too early.)
+- Catch-up re-fetches the newest page and merges by id, not "id > last":
+  ids are taken at insert, rows appear at commit.
+- Own messages arrive twice (insert answer + event); merged by id, and the
+  event also clears the pending bubble. So a lost answer now heals itself.
+- Becoming read-only after an unfriend is not live (unpublishable table);
+  it shows on the next send or on resume.
+- e2e: 132 checks. A second isolated browser (`Target.createBrowserContext`)
+  plays Ana. A WebSocket wrapper injected before the app loads can swallow
+  frames containing `window.__muteLive` (a missed event) and records sockets
+  in `window.__sockets`.
+
 ## Decisions
 
 Accepted by the developer (spec section 11):
@@ -450,9 +496,11 @@ membership; a conversation with no members left is deleted.
 Also decided (milestone 6): Home is the chat list, including read-only
 conversations; no message rate limit for now.
 
+Also decided (milestone 7): Supabase Realtime `postgres_changes`; publish
+only `messages` and `friend_requests`; read-only state is not live.
+
 Recommendations not yet explicitly confirmed (fine to follow, but mention them
-when they come up): Supabase Realtime before a custom WebSocket server; no
-request expiry.
+when they come up): no request expiry.
 
 Design: app name **Thread Buddies** (renamed from "Thread" on 15 Oct 2026,
 in the UI since milestone 3); font **Manrope**; accent **#f55252**; blacks
@@ -499,7 +547,7 @@ by Claude to match it.
      should be able to sign in).
    Spec sections 2, 4 and 9 updated (spec v2.3).
 4. **Hosted project setup** (at deployment): push the pending migrations
-   (profiles, avatars, avatar fixes, friend requests, conversations, messages), apply the auth settings. SMTP is done. Ask first.
+   (profiles, avatars, avatar fixes, friend requests, conversations, messages, realtime), apply the auth settings. SMTP is done. Ask first.
 5. Bundle is ~261 kB (83 kB gzipped). Fine for now; code-split later.
 6. Accessibility note, left as designed: white text on `#f55252` is about
    3.2:1 contrast, below 4.5:1. Near-black text on the red would pass.
@@ -515,33 +563,27 @@ by Claude to match it.
 
 ## Next phase
 
-### Milestone 7: realtime messaging (spec section 8)
+### Milestone 8: chat UX (spec section 8, "later features")
 
 Plan outline to present for approval:
 
-- **Transport:** Supabase Realtime `postgres_changes` (recommended in the
-  spec, not yet explicitly confirmed; confirm). Add `messages` to the
-  `supabase_realtime` publication. Each subscriber gets only rows its SELECT
-  policy allows, so delivery follows `is_conversation_member`.
-- **Subscriptions:** the open chat listens for inserts filtered by
-  `conversation_id`; Home listens for new messages in your conversations to
-  reorder and update previews; maybe the header badge listens to
-  `friend_requests` (replacing the window event).
-- **Recovery:** on (re)subscribe and on returning to the tab, re-fetch from
-  slightly before the newest message's `created_at` (ids are assigned at
-  insert but rows become visible at commit, so `id > last` can miss rows),
-  merge by id (`mergeMessages` already dedupes). Own sends arrive twice
-  (insert answer + event): dedupe by id.
-- **Lifecycle to explain:** websocket connect, JWT on the channel, heartbeat,
-  `SUBSCRIBED`/`CHANNEL_ERROR`/`TIMED_OUT`/`CLOSED`, token refresh, a small
-  "reconnecting" indicator.
-- **Read-only changes live?** When unfriended while the chat is open, the
-  next send fails and the banner appears (already). Optionally subscribe to
-  `friendships` deletes too.
-- **Tests:** e2e with two browser contexts (CDP `Target.createBrowserContext`)
-  for live delivery both ways, going offline and back
-  (`Network.emulateNetworkConditions`) and catching up, no duplicates;
-  pgTAP that the publication includes `messages` and RLS still filters.
+- **Unread counts and read receipts:** `conversation_members.last_read_message_id`
+  (reserved since milestone 5) gets its FK to `messages`; a
+  `mark_read(conversation, message_id)` function (only forward, only your
+  own row); unread count per chat in `my_conversations`; "Seen" under your
+  last message. Members' read positions are already readable by members.
+  Live updates of the other person's read position would need
+  `conversation_members` published, which we refused (deletes leak keys):
+  consider Broadcast for receipts instead.
+- **Typing indicator and presence:** Realtime Broadcast and Presence, which
+  do **not** go through table RLS; they need private channels and policies
+  on `realtime.messages` (topic per conversation, members only). Explain the
+  difference from postgres_changes.
+- **Decide:** whether read receipts are shown (privacy preference?), and
+  whether online status is visible to all friends.
+- **Tests:** pgTAP for `mark_read` (only forward, only members, only own
+  row) and the `realtime.messages` policies; e2e with two browsers for
+  typing, presence, unread badges and "Seen".
 
 ## Tooling and gotchas
 
@@ -552,6 +594,11 @@ Plan outline to present for approval:
 - Changing `supabase/config.toml` needs `npx supabase stop && npx supabase start`;
   a restart reuses the old data ("from backup"), so follow with
   `npm run db:reset` to reapply migrations.
+- **`npm run db:realtime`** checks Realtime delivery against RLS with real
+  users (needs the stack running).
+- **e2e harness:** don't close Vite's dev-server WebSocket in tests (Vite
+  reloads the page); Chrome's offline emulation does not close open
+  WebSockets. `type()` waits for its field to exist.
 - **`npm run db:race`** runs the two-session concurrency checks
   (`scripts/db/race.sh`, via `docker exec psql`). Run it with `db:test` when
   the friend functions change.

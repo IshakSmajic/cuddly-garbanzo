@@ -5,8 +5,11 @@ import { AppHeader } from '../components/AppHeader.tsx'
 import { PersonRow } from '../components/PersonRow.tsx'
 import { RelationActions } from '../components/RelationActions.tsx'
 import { pendingRequests, type PendingRequest } from '../lib/friends.ts'
+import type { Database } from '../lib/database.types.ts'
+import { subscribe } from '../lib/realtime.ts'
 
 type Lists = { incoming: PendingRequest[]; outgoing: PendingRequest[] }
+type Request = Database['public']['Tables']['friend_requests']['Row']
 
 export function Requests() {
   const { session } = useAuth()
@@ -16,13 +19,31 @@ export function Requests() {
 
   useEffect(() => {
     if (!userId) return
+    const me = userId
     let stale = false
-    pendingRequests(userId).then(
-      (result) => !stale && setLists(result),
-      (e: Error) => !stale && setError(e.message),
-    )
+    const load = () =>
+      pendingRequests(me).then(
+        (result) => !stale && setLists(result),
+        (e: Error) => !stale && setError(e.message),
+      )
+    void load()
+
+    // Live: a new request (either way) reloads the lists. An answer from the
+    // other side, or a cancel by the requester, removes the row. Our own
+    // accept or decline is already shown by the row itself.
+    const stop = subscribe<Request>({
+      table: 'friend_requests',
+      event: '*',
+      onChange: (payload) => {
+        if (payload.eventType === 'INSERT') return void load()
+        if (payload.eventType !== 'UPDATE' || payload.new.status === 'pending') return
+        if (payload.new.requester_id === me) drop('outgoing', payload.new.id)
+        else if (payload.new.status === 'cancelled') drop('incoming', payload.new.id)
+      },
+    })
     return () => {
       stale = true
+      stop()
     }
   }, [userId])
 

@@ -82,8 +82,13 @@ async function go(url) {
   await sleep(300)
   await waitFor(`document.readyState === 'complete'`, 'load')
 }
-// React controlled inputs need the native setter plus an input event.
+// React controlled inputs need the native setter plus an input event. Waits
+// for the field first: a page can still be loading after the URL changed.
 async function type(label, value) {
+  await waitFor(
+    `[...document.querySelectorAll('label')].some(l => l.textContent.trim().toLowerCase() === ${JSON.stringify(label.toLowerCase())})`,
+    `field ${label}`,
+  )
   await evaluate(`(() => {
     const l = [...document.querySelectorAll('label')].find(l => l.textContent.trim().toLowerCase() === ${JSON.stringify(label.toLowerCase())});
     if (!l) throw new Error('no label ${label}');
@@ -728,6 +733,23 @@ await send('Page.addScriptToEvaluateOnNewDocument', {
       }
       return response;
     };
+    // Swallows live (WebSocket) frames containing window.__muteLive, so a
+    // test can make the app miss a realtime event, as a sleeping tab would.
+    const RealSocket = window.WebSocket;
+    window.WebSocket = class extends RealSocket {
+      constructor(...args) {
+        super(...args);
+        (window.__sockets ??= []).push(this);
+        const handler = Object.getOwnPropertyDescriptor(RealSocket.prototype, 'onmessage');
+        Object.defineProperty(this, 'onmessage', {
+          get: () => handler.get.call(this),
+          set: (fn) => handler.set.call(this, fn && ((event) => {
+            if (window.__muteLive && String(event.data).includes(window.__muteLive)) return;
+            fn.call(this, event);
+          })),
+        });
+      }
+    };
   }`,
 })
 
@@ -778,16 +800,28 @@ await waitFor(`document.querySelectorAll('.bubble-row.is-mine').length === 1 && 
 check(true, 'ana replies')
 
 console.log('32. A lost answer and a retry')
+await waitFor(`document.querySelector('.chat[data-live=live]')`, 'ana live')
 await evaluate('window.__dropNextSendAnswer = true')
 await compose('Did this arrive?')
 await pressEnter()
+await waitFor(`${settled} && !document.body.innerText.includes('Not sent')`, 'healed by the live event')
+check(
+  (await bubbles()).filter((b) => b === 'Did this arrive?').length === 1,
+  'a lost answer heals itself: the live event delivers the stored message, shown once',
+)
+check((await rest(`messages?select=id&content=eq.${encodeURIComponent('Did this arrive?')}`)).length === 1, '... and it is stored once')
+// Now also miss the live event, so only Retry can resolve it.
+await evaluate(`window.__dropNextSendAnswer = true; window.__muteLive = 'Is this stored once?'`)
+await compose('Is this stored once?')
+await pressEnter()
 await waitFor(has('Not sent'), 'send looks failed')
-const stored = await rest(`messages?select=id&content=eq.${encodeURIComponent('Did this arrive?')}`)
-check(stored.length === 1, 'the app saw an error, but the message did reach the database')
+const stored = await rest(`messages?select=id&content=eq.${encodeURIComponent('Is this stored once?')}`)
+check(stored.length === 1, 'with the answer and the live event both lost, the app shows Not sent, but the message is stored')
 await click('Retry')
 await waitFor(settled, 'retried')
-check((await bubbles()).filter((b) => b === 'Did this arrive?').length === 1, 'retrying shows the message once')
-const afterRetry = await rest(`messages?select=id&content=eq.${encodeURIComponent('Did this arrive?')}`)
+check((await bubbles()).filter((b) => b === 'Is this stored once?').length === 1, 'retrying shows the message once')
+await evaluate('window.__muteLive = null')
+const afterRetry = await rest(`messages?select=id&content=eq.${encodeURIComponent('Is this stored once?')}`)
 check(afterRetry.length === 1 && afterRetry[0].id === stored[0].id, 'the retry reused the client_id: still one message in the database')
 
 console.log('33. Older messages')
@@ -803,7 +837,7 @@ await waitFor(`document.querySelectorAll('.bubble-row').length === 50`, 'first p
 check((await text()).includes('Load older messages'), 'a chat opens with the newest 50 and offers older ones')
 check((await bubbles()).at(-1) === 'Seeded 60', '... newest at the bottom')
 await click('Load older messages')
-await waitFor(`document.querySelectorAll('.bubble-row').length === 64`, 'all loaded')
+await waitFor(`document.querySelectorAll('.bubble-row').length === 65`, 'all loaded')
 const all = await bubbles()
 check(all[0] === 'Hi Ana' && new Set(all).size === all.length, 'loading older pages brings the rest, without repeats')
 check(!(await text()).includes('Load older messages'), 'the button goes once everything is loaded')
@@ -819,7 +853,7 @@ await click('View messages')
 await waitFor(has("aren't friends any more"), 'read-only banner')
 check(!(await evaluate(`document.querySelector('.chat-composer')`)), 'the composer is replaced by a read-only note')
 await click('Load older messages')
-await waitFor(`document.querySelectorAll('.bubble-row').length === 64`, 'read-only history')
+await waitFor(`document.querySelectorAll('.bubble-row').length === 65`, 'read-only history')
 check(true, 'the whole history, older pages included, is still readable')
 await shot('31-chat-read-only')
 const refused = await restWrite('POST', 'messages', { conversation_id: chatId, client_id: crypto.randomUUID(), content: 'sneaky' })
@@ -836,6 +870,214 @@ check(
   await evaluate(`(() => { const s = document.querySelector('.chat-scroll'); return s.scrollHeight - s.scrollTop - s.clientHeight < 4 })()`),
   'the chat opens scrolled to the newest message',
 )
+
+// A second, isolated browser (its own cookies and storage, so its own
+// session) for live tests between two people at once.
+async function connect(url) {
+  const socket = new WebSocket(url)
+  await new Promise((r) => socket.addEventListener('open', r, { once: true }))
+  let id = 1
+  const waiting = new Map()
+  socket.addEventListener('message', (e) => {
+    const msg = JSON.parse(e.data)
+    if (msg.id && waiting.has(msg.id)) {
+      waiting.get(msg.id)(msg)
+      waiting.delete(msg.id)
+    }
+  })
+  const call = (method, params = {}) =>
+    new Promise((resolve, reject) => {
+      const n = id++
+      waiting.set(n, (m) => (m.error ? reject(new Error(`${method}: ${m.error.message}`)) : resolve(m.result)))
+      socket.send(JSON.stringify({ id: n, method, params }))
+    })
+  return { socket, call }
+}
+async function openSecondBrowser() {
+  const { webSocketDebuggerUrl } = await (await fetch('http://127.0.0.1:9333/json/version')).json()
+  const browser = await connect(webSocketDebuggerUrl)
+  const { browserContextId } = await browser.call('Target.createBrowserContext')
+  const { targetId } = await browser.call('Target.createTarget', { url: 'about:blank', browserContextId })
+  const target = (await (await fetch('http://127.0.0.1:9333/json')).json()).find((t) => t.id === targetId)
+  const page2 = await connect(target.webSocketDebuggerUrl)
+  await page2.call('Page.enable')
+  await page2.call('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false })
+  const evaluate2 = async (expr) => {
+    const r = await page2.call('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true })
+    if (r.exceptionDetails) throw new Error(`eval failed (second browser): ${expr}\n${r.exceptionDetails.exception?.description}`)
+    return r.result.value
+  }
+  const waitFor2 = async (expr, label, timeout = 8000) => {
+    const start = Date.now()
+    while (Date.now() - start < timeout) {
+      if (await evaluate2(`Boolean(${expr})`)) return
+      await sleep(100)
+    }
+    throw new Error(`Timed out waiting for (second browser): ${label}`)
+  }
+  return {
+    evaluate: evaluate2,
+    waitFor: waitFor2,
+    async go(url) {
+      await page2.call('Page.navigate', { url })
+      await sleep(300)
+      await waitFor2(`document.readyState === 'complete'`, 'load')
+    },
+    async type(label, value) {
+      await waitFor2(
+        `[...document.querySelectorAll('label')].some(l => l.textContent.trim().toLowerCase() === ${JSON.stringify(label.toLowerCase())})`,
+        `field ${label}`,
+      )
+      await evaluate2(`(() => {
+        const l = [...document.querySelectorAll('label')].find(l => l.textContent.trim().toLowerCase() === ${JSON.stringify(label.toLowerCase())});
+        const input = document.getElementById(l.htmlFor);
+        Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), 'value').set.call(input, ${JSON.stringify(value)});
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      })()`)
+    },
+    async click(textContent) {
+      await evaluate2(`(() => {
+        const el = [...document.querySelectorAll('button, a')].find(b => b.innerText.trim().startsWith(${JSON.stringify(textContent)}));
+        if (!el) throw new Error('no button ${textContent}');
+        el.click();
+      })()`)
+    },
+    async say(value) {
+      await evaluate2(`(() => {
+        const el = document.querySelector('.chat-composer textarea');
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(el, ${JSON.stringify(value)});
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      })()`)
+      await waitFor2(`!document.querySelector('.is-pending')`, `sent: ${value}`)
+    },
+    async close() {
+      await browser.call('Target.disposeBrowserContext', { browserContextId })
+      page2.socket.close()
+      browser.socket.close()
+    },
+  }
+}
+const countOf = async (content) => (await bubbles()).filter((b) => b === content).length
+const isLive = `document.querySelector('.chat[data-live=live]')`
+
+console.log('36. Live chat between two browsers')
+await viewport(1680, 900)
+await go(APP + chatPath)
+await waitFor(isLive, 'ben live')
+check(true, 'ben’s chat subscribes and goes live')
+const anaBrowser = await openSecondBrowser()
+await anaBrowser.go(APP + '/sign-in')
+await anaBrowser.type('Email', ana.email)
+await anaBrowser.type('Password', newPassword)
+await anaBrowser.click('Enter Thread Buddies')
+await anaBrowser.waitFor(`location.pathname === '/'`, 'ana signed in (second browser)')
+await anaBrowser.go(APP + chatPath)
+await anaBrowser.waitFor(isLive, 'ana live')
+check(true, 'ana, in a separate browser, has the same chat open and live')
+await anaBrowser.say('Live from Ana')
+await waitFor(`document.querySelector('.bubble-row:not(.is-mine):last-of-type .bubble-text')?.innerText === 'Live from Ana'`, 'ben receives', 5000)
+check(true, 'ana’s message appears for ben without a reload')
+await compose('Live from Ben')
+await pressEnter()
+await anaBrowser.waitFor(
+  `[...document.querySelectorAll('.bubble-row:not(.is-mine) .bubble-text')].some(b => b.innerText === 'Live from Ben')`,
+  'ana receives',
+  5000,
+)
+check(true, 'ben’s reply appears for ana without a reload')
+await sleep(800)
+check((await countOf('Live from Ben')) === 1, 'ben’s own message shows once (the insert answer and the live event are merged by id)')
+await shot('33-chat-live')
+
+console.log('37. Home updates live')
+await go(APP + '/')
+await waitFor(`document.querySelector('.person-list')`, 'ben home')
+await sleep(1500) // the home subscription becomes ready
+await anaBrowser.say('Fresh preview')
+await waitFor(`document.querySelector('.person-list')?.innerText.includes('Fresh preview')`, 'preview updates', 5000)
+check(true, 'a new message updates the chat preview on home without a reload')
+
+console.log('38. Requests update live')
+await go(APP + '/requests')
+await waitFor(`document.querySelectorAll('.request-section').length === 2`, 'ben requests')
+await sleep(1500)
+await anaBrowser.go(`${APP}/u/${benName}`)
+await anaBrowser.click('Unfriend')
+await anaBrowser.waitFor(`document.querySelector('.confirm-box')`, 'confirm')
+await anaBrowser.click('Unfriend @')
+await anaBrowser.waitFor(`document.body.innerText.includes('Add friend')`, 'unfriended')
+await anaBrowser.click('Add friend')
+await anaBrowser.waitFor(`document.body.innerText.includes('Request sent')`, 'ana asks again')
+await waitFor(`document.querySelector('.person-list')?.innerText.includes('Ana Edited')`, 'request appears', 5000)
+check(true, 'a new request appears on the requests page without a reload')
+await waitFor(`document.querySelector('.nav-badge')?.innerText === '1'`, 'badge', 5000)
+check(true, 'the header badge counts it live')
+await anaBrowser.click('Cancel')
+await waitFor(`!document.querySelector('.person-list') && !document.querySelector('.nav-badge')`, 'cancel arrives', 5000)
+check(true, 'when ana cancels, the request and the badge disappear live')
+await anaBrowser.click('Add friend')
+await waitFor(`document.querySelector('.person-list')?.innerText.includes('Ana Edited')`, 'request again', 5000)
+await click('Accept')
+await waitFor(`document.querySelector('.relation-label.is-friends')`, 'friends again')
+
+console.log('39. Catching up after missed events')
+await go(APP + chatPath)
+await waitFor(isLive, 'ben live again')
+await anaBrowser.go(APP + chatPath)
+await anaBrowser.waitFor(isLive, 'ana back in the chat')
+// Ben's browser misses these events, like a sleeping tab or a dropped socket.
+await evaluate(`window.__muteLive = 'Missed'`)
+for (const n of [1, 2, 3]) await anaBrowser.say(`Missed ${n}`)
+await sleep(1000)
+check((await countOf('Missed 1')) === 0, 'with the events missed, the messages are not on screen yet')
+await evaluate(`window.__muteLive = null; window.dispatchEvent(new Event('online'))`)
+await waitFor(`[...document.querySelectorAll('.bubble-text')].some(b => b.innerText === 'Missed 3')`, 'caught up', 5000)
+check(
+  (await countOf('Missed 1')) === 1 && (await countOf('Missed 2')) === 1 && (await countOf('Missed 3')) === 1,
+  'coming back online fetches what was missed, each message once',
+)
+const ordered = (await bubbles()).filter((b) => b.startsWith('Missed'))
+check(JSON.stringify(ordered) === JSON.stringify(['Missed 1', 'Missed 2', 'Missed 3']), '... in order')
+
+console.log('40. A long gap')
+await evaluate(`window.__muteLive = 'Gap'`)
+const gapSeed = await anaBrowser.evaluate(`(async () => {
+  const key = Object.keys(localStorage).find(k => /^sb-.*-auth-token$/.test(k));
+  const session = JSON.parse(localStorage.getItem(key));
+  const res = await fetch(${JSON.stringify(env.VITE_SUPABASE_URL)} + '/rest/v1/messages', {
+    method: 'POST',
+    headers: { apikey: ${JSON.stringify(env.VITE_SUPABASE_PUBLISHABLE_KEY)}, authorization: 'Bearer ' + session.access_token,
+      'content-type': 'application/json', prefer: 'return=minimal' },
+    body: JSON.stringify(Array.from({ length: 55 }, (_, i) => ({ conversation_id: ${JSON.stringify(chatId)}, client_id: crypto.randomUUID(), content: 'Gap ' + (i + 1) }))),
+  });
+  return res.status;
+})()`)
+check(gapSeed === 201, `55 messages arrive while ben misses the events (${gapSeed})`)
+await sleep(1000)
+await evaluate(`window.__muteLive = null; window.dispatchEvent(new Event('online'))`)
+await waitFor(`[...document.querySelectorAll('.bubble-text')].some(b => b.innerText === 'Gap 55')`, 'gap caught up', 5000)
+const afterGap = await bubbles()
+check(afterGap.length === 50 && afterGap[0] === 'Gap 6', 'more than a page missed: the chat restarts from the newest 50, no hole in between')
+check((await text()).includes('Load older messages'), '... and offers the older ones')
+await click('Load older messages')
+await waitFor(`[...document.querySelectorAll('.bubble-text')].some(b => b.innerText === 'Gap 5')`, 'older after gap')
+check(new Set(await bubbles()).size === (await bubbles()).length, 'loading older after a gap repeats nothing')
+
+console.log('41. Losing the connection')
+// Chrome's offline emulation leaves open WebSockets alone, so drop the app's
+// socket directly, as a network failure would. Realtime notices, retries
+// with backoff, rejoins the channel and the chat catches up.
+// Only Realtime's socket: closing Vite's dev-server socket makes Vite reload the page.
+await evaluate(`window.__sockets.filter(s => s.url.includes('/realtime/') && s.readyState === WebSocket.OPEN).forEach(s => s.close(4000, 'test: connection lost'))`)
+await waitFor(`document.querySelector('.chat[data-live=reconnecting]')`, 'reconnecting shown', 5000)
+check((await text()).includes('Reconnecting…'), 'a dropped connection shows Reconnecting…')
+await shot('34-chat-reconnecting')
+await anaBrowser.say('While you were away')
+await waitFor(`${isLive} && [...document.querySelectorAll('.bubble-text')].some(b => b.innerText === 'While you were away')`, 'reconnected', 30000)
+check(!(await text()).includes('Reconnecting…'), 'it reconnects by itself and the notice goes')
+check((await countOf('While you were away')) === 1, 'the message sent meanwhile appears once')
+await anaBrowser.close()
 
 ws.close()
 console.log(process.exitCode ? 'Some checks FAILED' : 'All checks passed')

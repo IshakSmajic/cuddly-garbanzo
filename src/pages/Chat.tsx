@@ -6,6 +6,7 @@ import { Avatar } from '../components/Avatar.tsx'
 import { dayLabel, messageTime, sameDay } from '../lib/chatTime.ts'
 import {
   canSend,
+  catchUp,
   COUNTER_FROM,
   MESSAGE_MAX,
   messageError,
@@ -22,6 +23,7 @@ import {
   sendMessage,
   type ConversationSummary,
 } from '../lib/messages.ts'
+import { onResume, subscribe, type LiveState } from '../lib/realtime.ts'
 
 /** A message on its way: shown at the end until the server has it. */
 type Pending = { clientId: string; content: string; failed: string | null }
@@ -94,6 +96,12 @@ function Conversation({ me, initial }: ConversationProps) {
   const [olderState, setOlderState] = useState<'idle' | 'loading' | 'error'>('idle')
   const [pending, setPending] = useState<Pending[]>([])
   const [text, setText] = useState('')
+  const [live, setLive] = useState<LiveState>('connecting')
+  // The messages on screen, for callbacks that outlive a render.
+  const shown = useRef(messages)
+  useEffect(() => {
+    shown.current = messages
+  }, [messages])
 
   const scroller = useRef<HTMLDivElement>(null)
   // What the next layout pass should do with the scroll position.
@@ -107,6 +115,52 @@ function Conversation({ me, initial }: ConversationProps) {
     el.scrollTop = intent.kind === 'bottom' ? el.scrollHeight : el.scrollHeight - intent.fromBottom
     scrollIntent.current = null
   }, [messages, pending])
+
+  // Follow new messages only if the reader is already at the bottom.
+  function atBottom() {
+    const el = scroller.current
+    return !el || el.scrollHeight - el.scrollTop - el.clientHeight < 80
+  }
+
+  useEffect(() => {
+    // After a reconnect or a sleeping tab: fetch the newest page and merge.
+    // Not "everything after the last id": ids are taken when an insert starts
+    // but rows appear when it commits, so a lower id can show up later.
+    async function refresh() {
+      try {
+        const [latest, fresh] = await Promise.all([messagesPage(conversationId), conversationSummary(conversationId)])
+        const { gap } = catchUp(shown.current, latest, PAGE_SIZE)
+        if (atBottom()) scrollIntent.current = { kind: 'bottom' }
+        setMessages((ms) => catchUp(ms, latest, PAGE_SIZE).messages)
+        if (gap) setHasOlder(true)
+        // Unfriending isn't published live (see the realtime migration), so
+        // the read-only state is picked up here.
+        if (fresh) setSummary(fresh)
+      } catch {
+        // The next resume or reconnect tries again.
+      }
+    }
+
+    const stop = subscribe<Message>({
+      table: 'messages',
+      event: 'INSERT',
+      filter: `conversation_id=eq.${conversationId}`,
+      onChange: (payload) => {
+        const message = payload.new as Message
+        if (atBottom() || message.sender_id === me) scrollIntent.current = { kind: 'bottom' }
+        setMessages((ms) => mergeMessages(ms, [message]))
+        // Our own send can arrive here before its insert returns.
+        setPending((ps) => ps.filter((p) => p.clientId !== message.client_id))
+      },
+      onReady: () => void refresh(),
+      onState: setLive,
+    })
+    const stopResume = onResume(() => void refresh())
+    return () => {
+      stop()
+      stopResume()
+    }
+  }, [conversationId, me])
 
   const name = summary.display_name ?? 'Deleted user'
   const deleted = summary.other_id === null
@@ -169,7 +223,7 @@ function Conversation({ me, initial }: ConversationProps) {
   const tooLong = messageError(text)
 
   return (
-    <main className="chat">
+    <main className="chat" data-live={live}>
       <div className="chat-head">
         <Link to="/" className="chat-back" aria-label="Back to your chats">
           ‹
@@ -187,6 +241,12 @@ function Conversation({ me, initial }: ConversationProps) {
         </div>
         {!summary.is_friend && <span className="tag">Read only</span>}
       </div>
+
+      {live === 'reconnecting' && (
+        <p className="chat-live" role="status">
+          Reconnecting…
+        </p>
+      )}
 
       <div className="chat-scroll" ref={scroller}>
         <div className="chat-log" role="log" aria-label={`Messages with ${name}`}>

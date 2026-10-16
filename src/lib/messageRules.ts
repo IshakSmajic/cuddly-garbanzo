@@ -58,3 +58,19 @@ export function mergeMessages(existing: Message[], incoming: Message[]): Message
   for (const m of incoming) byId.set(m.id, m)
   return [...byId.values()].sort(compareMessages)
 }
+
+/**
+ * Merges a freshly fetched newest page into what's on screen, after a
+ * reconnect or a sleeping tab. If the whole page is newer than the newest
+ * message we have, messages may be missing in between (more than a page
+ * arrived meanwhile): start again from the fetched page and let "load older"
+ * fill in, rather than show a silent gap.
+ */
+export function catchUp(existing: Message[], latestPage: Message[], pageSize: number) {
+  const newest = existing.at(-1)
+  const oldestFetched = latestPage[0]
+  const gap = Boolean(
+    newest && oldestFetched && latestPage.length >= pageSize && compareMessages(oldestFetched, newest) > 0,
+  )
+  return { messages: gap ? latestPage : mergeMessages(existing, latestPage), gap }
+}

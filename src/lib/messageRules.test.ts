@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   canSend,
+  catchUp,
   compareMessages,
   MESSAGE_MAX,
   messageError,
@@ -71,5 +72,30 @@ describe('compareMessages and mergeMessages', () => {
     const two = message(2, '2026-10-16T07:00:01+00:00')
     const three = message(3, '2026-10-16T07:00:02+00:00')
     expect(mergeMessages([one, three], [two, three]).map((m) => m.id)).toEqual([1, 2, 3])
+  })
+})
+
+describe('catchUp', () => {
+  const at = (second: number) => `2026-10-16T07:00:${String(second).padStart(2, '0')}+00:00`
+  const page = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => message(from + i, at(from + i)))
+
+  it('merges an overlapping page without duplicates', () => {
+    const result = catchUp(page(1, 5), page(3, 7), 5)
+    expect(result.gap).toBe(false)
+    expect(result.messages.map((m) => m.id)).toEqual([1, 2, 3, 4, 5, 6, 7])
+  })
+
+  it('finds a gap when a full page is all newer than what we have', () => {
+    const result = catchUp(page(1, 5), page(11, 15), 5)
+    expect(result.gap).toBe(true)
+    expect(result.messages.map((m) => m.id)).toEqual([11, 12, 13, 14, 15])
+  })
+
+  it('a short page is everything there is, so there is no gap', () => {
+    expect(catchUp(page(1, 5), page(8, 9), 5).gap).toBe(false)
+  })
+
+  it('an empty chat simply takes the page', () => {
+    expect(catchUp([], page(1, 3), 5)).toEqual({ messages: page(1, 3), gap: false })
   })
 })

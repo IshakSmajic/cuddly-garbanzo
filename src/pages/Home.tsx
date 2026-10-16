@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { useAuth } from '../auth/context.ts'
 import { AppHeader } from '../components/AppHeader.tsx'
 import { Avatar } from '../components/Avatar.tsx'
 import { listTime } from '../lib/chatTime.ts'
+import { timeKey, type Message } from '../lib/messageRules.ts'
 import { myConversations, type ConversationSummary } from '../lib/messages.ts'
+import { onResume, subscribe } from '../lib/realtime.ts'
 
 // Every conversation you're in: friends, and read-only ones with former
 // friends or deleted accounts (their history stays readable).
@@ -13,16 +15,46 @@ export function Home() {
   const userId = session?.user.id
   const [chats, setChats] = useState<ConversationSummary[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const shown = useRef(chats)
+  useEffect(() => {
+    shown.current = chats
+  }, [chats])
 
   useEffect(() => {
     if (!userId) return
     let stale = false
-    myConversations().then(
-      (list) => !stale && setChats(list),
-      (e: Error) => !stale && setError(e.message),
-    )
+    const load = () =>
+      myConversations().then(
+        (list) => !stale && setChats(list),
+        (e: Error) => !stale && setError(e.message),
+      )
+    void load()
+
+    // RLS sends only messages from your own conversations. A known chat gets
+    // its preview updated and moves to the top; an unknown one (a friendship
+    // made in another tab) means the list is out of date.
+    const stopMessages = subscribe<Message>({
+      table: 'messages',
+      event: 'INSERT',
+      onChange: (payload) => {
+        const m = payload.new as Message
+        if (!shown.current?.some((c) => c.conversation_id === m.conversation_id)) return void load()
+        setChats((cs) => cs && withMessage(cs, m))
+      },
+      onReady: () => void load(),
+    })
+    // One of your requests accepted: a new chat exists.
+    const stopRequests = subscribe({
+      table: 'friend_requests',
+      event: 'UPDATE',
+      onChange: (payload) => (payload.new as { status: string }).status === 'accepted' && void load(),
+    })
+    const stopResume = onResume(() => void load())
     return () => {
       stale = true
+      stopMessages()
+      stopRequests()
+      stopResume()
     }
   }, [userId])
 
@@ -80,4 +112,15 @@ function ChatRow({ chat, me }: { chat: ConversationSummary; me: string | undefin
       </Link>
     </li>
   )
+}
+
+/** The list with `m` as its chat's last message, most recent chat first. */
+function withMessage(chats: ConversationSummary[], m: Message): ConversationSummary[] {
+  return chats
+    .map((c) =>
+      c.conversation_id === m.conversation_id
+        ? { ...c, last_content: m.content, last_sender_id: m.sender_id, last_at: m.created_at }
+        : c,
+    )
+    .sort((a, b) => (b.last_at ? timeKey(b.last_at) : 0) - (a.last_at ? timeKey(a.last_at) : 0))
 }

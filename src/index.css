@@ -1054,3 +1054,12 @@ textarea.field-input {
     max-width: 86%;
   }
 }
+
+.chat-live {
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--black-2);
+  color: var(--grey-1);
+  font-size: 13px;
+  text-align: center;
+}
