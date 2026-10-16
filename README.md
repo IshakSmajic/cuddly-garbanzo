@@ -71,7 +71,11 @@ While the local stack runs:
 | `npm run build` | Type-check, then production build into `dist/` |
 | `npm run typecheck` | Type-check only |
 | `npm test` | Unit tests (Vitest) |
-| `npm run test:e2e` | Headless-Chrome walk-through of the auth flow (needs the local stack and Google Chrome) |
+| `npm run test:e2e` | Headless-Chrome walk-through of the whole app, with a second browser for live features (needs the local stack and Google Chrome) |
+| `npm run db:test` | pgTAP database tests |
+| `npm run db:race` | Two database sessions at once: concurrency checks for friend requests and conversations |
+| `npm run db:realtime` | Checks Realtime delivery and private channels against the access rules, with real users (needs the local stack) |
+| `npm run db:types` | Regenerate `src/lib/database.types.ts` after a migration |
 | `npm run spec:build` | Regenerate the spec `.docx` from `scripts/spec/build_spec.py` |
 | `npm run lint` | Oxlint |
 | `npm run db:stop` | Stop the local stack |

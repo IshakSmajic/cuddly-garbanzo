@@ -1,7 +1,7 @@
 # Thread Buddies — progress and handoff
 
-Last updated: 16 October 2026, after milestone 8 (built and checked on
-`milestone-8-chat-ux`; not yet committed).
+Last updated: 16 October 2026, after milestone 8 (commit `8b3d0a2`, pushed).
+Milestone 9 has not started.
 
 This file is the running record of the project: what is done, what is live,
 what was decided, and what comes next. Read it at the start of a session and
@@ -21,7 +21,7 @@ are in `CLAUDE.md`.
 | 5 | Friendships: friend list, unfriend, accept creates the conversation | Done (commit `ce0e4c6`) |
 | 6 | Direct messaging persistence: history, friends-only sending, paging | Done (commit `f4c09ce`) |
 | 7 | Realtime messaging: live delivery, reconnect recovery, dedupe | Done (commit `ea728e0`) |
-| 8 | Chat UX: typing, presence, unread counts, read receipts | Built on `milestone-8-chat-ux`, all checks pass; awaiting commit |
+| 8 | Chat UX: typing, presence, unread counts, read receipts | Done (commit `8b3d0a2`) |
 | 9 | Media: image messages | **Next.** Plan outline below |
 | 10 | Release: deploy (Vercel + Gmail SMTP), security review, mobile polish | Not started |
 
@@ -625,6 +625,15 @@ by Claude to match it.
    `https://github.com/IshakSmajic/treads-buddies.git`. If another machine
    still uses the old `cuddly-garbanzo` URL, run
    `git remote set-url origin https://github.com/IshakSmajic/treads-buddies.git`.
+9. **Commit attribution. Decided 16 Oct 2026: no co-author line.** GitHub
+   listed Claude as a contributor because commit messages ended with
+   `Co-Authored-By: Claude … <noreply@anthropic.com>`. From now on commits
+   carry no such line (rule in `CLAUDE.md`). The 11 existing commits that
+   have it (`11a81d2` through `8b3d0a2`) were left as they are: removing it
+   would mean rewriting history and force-pushing `main` (new hashes, the
+   other machine must `git fetch && git reset --hard origin/main`, hashes in
+   this file to update, any fork keeps the old history). Still possible
+   later if wanted.
 
 ## Next phase
 
