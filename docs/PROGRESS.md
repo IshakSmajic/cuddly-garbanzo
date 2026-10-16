@@ -1,6 +1,6 @@
 # Thread Buddies — progress and handoff
 
-Last updated: 16 October 2026, after milestone 8 (commit `8b3d0a2`, pushed).
+Last updated: 16 October 2026, after milestone 8 (commit `4969d4e`, pushed).
 Milestone 9 has not started.
 
 This file is the running record of the project: what is done, what is live,
@@ -13,15 +13,15 @@ are in `CLAUDE.md`.
 
 | # | Milestone | Status |
 |---|---|---|
-| 1 | Foundation: TypeScript, local Supabase, remove demo | Done (commit `14b28b3`) |
-| 2 | Auth: sign up, confirm email, sign in, onboarding, protected routes | Done (commit `c2409e4`) |
+| 1 | Foundation: TypeScript, local Supabase, remove demo | Done (commit `9b3b557`) |
+| 2 | Auth: sign up, confirm email, sign in, onboarding, protected routes | Done (commit `ccac84b`) |
 | 2b | Password reset (follow-up to milestone 2) | Done (commit "Milestone 2b: password reset") |
 | 3 | Profiles and avatars: profile editor, avatar upload/replace/remove, rename to Thread Buddies | Done (commits "Profile picture functionality and upload", "Avatar delete guard and error code fix") |
-| 4 | User discovery and requests: search, send/cancel/accept/decline, blocking (+ the `friendships` table) | Done (commit `109b360`, message typo "Fruend") |
-| 5 | Friendships: friend list, unfriend, accept creates the conversation | Done (commit `ce0e4c6`) |
-| 6 | Direct messaging persistence: history, friends-only sending, paging | Done (commit `f4c09ce`) |
-| 7 | Realtime messaging: live delivery, reconnect recovery, dedupe | Done (commit `ea728e0`) |
-| 8 | Chat UX: typing, presence, unread counts, read receipts | Done (commit `8b3d0a2`) |
+| 4 | User discovery and requests: search, send/cancel/accept/decline, blocking (+ the `friendships` table) | Done (commit `6632ad1`, message typo "Fruend") |
+| 5 | Friendships: friend list, unfriend, accept creates the conversation | Done (commit `d14a37c`) |
+| 6 | Direct messaging persistence: history, friends-only sending, paging | Done (commit `791cfe9`) |
+| 7 | Realtime messaging: live delivery, reconnect recovery, dedupe | Done (commit `da52688`) |
+| 8 | Chat UX: typing, presence, unread counts, read receipts | Done (commit `4969d4e`) |
 | 9 | Media: image messages | **Next.** Plan outline below |
 | 10 | Release: deploy (Vercel + Gmail SMTP), security review, mobile polish | Not started |
 
@@ -625,15 +625,18 @@ by Claude to match it.
    `https://github.com/IshakSmajic/treads-buddies.git`. If another machine
    still uses the old `cuddly-garbanzo` URL, run
    `git remote set-url origin https://github.com/IshakSmajic/treads-buddies.git`.
-9. **Commit attribution. Decided 16 Oct 2026: no co-author line.** GitHub
-   listed Claude as a contributor because commit messages ended with
-   `Co-Authored-By: Claude … <noreply@anthropic.com>`. From now on commits
-   carry no such line (rule in `CLAUDE.md`). The 11 existing commits that
-   have it (`11a81d2` through `8b3d0a2`) were left as they are: removing it
-   would mean rewriting history and force-pushing `main` (new hashes, the
-   other machine must `git fetch && git reset --hard origin/main`, hashes in
-   this file to update, any fork keeps the old history). Still possible
-   later if wanted.
+9. **Commit attribution. Done 16 Oct 2026.** GitHub listed Claude as a
+   contributor because commit messages ended with
+   `Co-Authored-By: Claude … <noreply@anthropic.com>`. Commits no longer
+   carry it (rule in `CLAUDE.md`), and the history was rewritten to remove it
+   from the 11 commits that had it (messages only, with the same file trees,
+   authors and dates, verified commit by commit), then force-pushed to
+   `main`. Because each commit includes its parent's hash, every commit after
+   `f0368aa` got a new hash; the hashes in this file are the new ones. **The other machine must run**
+   `git fetch && git reset --hard origin/main` (check first that it has no
+   uncommitted work); a plain `git pull` would merge the old history back in.
+   The Mac keeps the old history in the local branch
+   `backup/before-coauthor-rewrite` until it's deleted.
 
 ## Next phase
 
