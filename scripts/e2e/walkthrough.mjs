@@ -637,15 +637,18 @@ async function makeFriends() {
   await waitFor(`document.querySelector('.relation-label.is-friends')`, 'ben accepts')
 }
 
-console.log('26. Friends on the home screen')
+console.log('26. Chats on the home screen')
 await viewport(1680, 900)
 await go(APP + '/')
-await waitFor(has('No friends yet.'), 'empty friends')
-check(true, 'with no friends, home points to people search')
+await waitFor(`document.querySelector('.person-list')`, 'chat list')
+check(
+  (await results()).includes('Ana Edited') && (await results()).includes('Read only'),
+  'the history with ana (friends once, then blocked) is on home, read only',
+)
 await makeFriends()
 await go(APP + '/')
-await waitFor(`document.querySelector('.person-list')`, 'friend list')
-check((await results()).includes('Ana Edited') && (await results()).includes('Since'), 'after accepting, ana is on ben’s friend list')
+await waitFor(`document.querySelector('.person-list')`, 'chat list again')
+check((await results()).includes('Ana Edited') && !(await results()).includes('Read only'), 'after accepting, the chat with ana is no longer read only')
 await shot('26-home-friends')
 const conversations = await rest('conversations?select=id')
 check(conversations.length === 1, 'accepting created one conversation, visible to ben')
@@ -662,8 +665,8 @@ await click('Unfriend @')
 await waitFor(has('Add friend'), 'unfriended')
 check(!(await text()).includes('Friends'), 'after unfriending, the profile offers Add friend')
 await go(APP + '/')
-await waitFor(has('No friends yet.'), 'list empty again')
-check(true, 'ana leaves ben’s friend list')
+await waitFor(`document.querySelector('.person-list')`, 'chat list after unfriend')
+check((await results()).includes('Read only'), 'after unfriending, the chat stays on home, read only')
 const afterUnfriend = await rest('conversations?select=id')
 check(afterUnfriend.length === 1 && afterUnfriend[0].id === conversations[0].id, 'the conversation survives unfriending')
 
@@ -675,9 +678,164 @@ check(again.length === 1 && again[0].id === conversations[0].id, 're-friending r
 console.log('29. Home on mobile')
 await viewport(390, 844, true)
 await go(APP + '/')
-await waitFor(`document.querySelector('.person-list')`, 'mobile friend list')
+await waitFor(`document.querySelector('.person-list')`, 'mobile chat list')
 await shot('28-home-mobile')
 check(!(await evaluate('document.documentElement.scrollWidth > window.innerWidth')), 'home has no horizontal scroll at 390px')
+
+// The composer is a textarea with an aria-label, so the label-based type() doesn't reach it.
+async function compose(value) {
+  await evaluate(`(() => {
+    const el = document.querySelector('.chat-composer textarea');
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(el, ${JSON.stringify(value)});
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`)
+}
+async function pressEnter() {
+  await evaluate(`document.querySelector('.chat-composer textarea').dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))`)
+}
+const bubbles = (selector = '.bubble-row') =>
+  evaluate(`[...document.querySelectorAll(${JSON.stringify(selector)})].map(b => b.querySelector('.bubble-text').innerText)`)
+const settled = `!document.querySelector('.is-pending')`
+async function restWrite(method, query, body) {
+  const session = JSON.parse(
+    await evaluate(`localStorage.getItem(Object.keys(localStorage).find(k => /^sb-.*-auth-token$/.test(k)))`),
+  )
+  return fetch(`${env.VITE_SUPABASE_URL}/rest/v1/${query}`, {
+    method,
+    headers: {
+      apikey: env.VITE_SUPABASE_PUBLISHABLE_KEY,
+      authorization: `Bearer ${session.access_token}`,
+      'content-type': 'application/json',
+      prefer: 'return=minimal',
+    },
+    body: JSON.stringify(body),
+  })
+}
+// Lets the test lose the *answer* to one send: the request reaches the
+// database, but the app sees a network error. Installed before the app's own
+// scripts, so the Supabase client picks up this fetch.
+await send('Page.addScriptToEvaluateOnNewDocument', {
+  source: `{
+    const realFetch = window.fetch.bind(window);
+    window.fetch = async (input, init) => {
+      const response = await realFetch(input, init);
+      const url = typeof input === 'string' ? input : input.url;
+      const method = (init?.method ?? (typeof input === 'string' ? 'GET' : input.method)).toUpperCase();
+      if (window.__dropNextSendAnswer && method === 'POST' && url.includes('/rest/v1/messages')) {
+        window.__dropNextSendAnswer = false;
+        throw new TypeError('Failed to fetch');
+      }
+      return response;
+    };
+  }`,
+})
+
+console.log('30. Send messages')
+await viewport(1680, 900)
+await go(`${APP}/u/${ana.username}`)
+await click('Message')
+await waitFor(`location.pathname.startsWith('/c/')`, 'profile → chat')
+check(true, 'a friend’s profile opens your chat')
+await waitFor(`document.querySelector('.chat-composer')`, 'chat loaded')
+const chatPath = await path()
+check((await text()).includes('No messages yet. Say hello.'), 'a new chat says it is empty')
+await compose('   ')
+check(await evaluate(`document.querySelector('.chat-send').disabled`), 'a message of only spaces cannot be sent')
+await compose('x'.repeat(3600))
+check((await text()).includes('3,600 / 4,000'), 'a counter appears near the limit')
+await compose('x'.repeat(4001))
+check(
+  (await text()).includes('Messages are at most 4,000 characters.') && (await evaluate(`document.querySelector('.chat-send').disabled`)),
+  'over 4,000 characters is refused before sending',
+)
+await compose('  Hi Ana  ')
+await pressEnter()
+await waitFor(`document.querySelector('.bubble-row.is-mine') && ${settled}`, 'sent')
+check(JSON.stringify(await bubbles()) === JSON.stringify(['Hi Ana']), 'Enter sends; the ends are trimmed')
+check((await evaluate(`document.querySelector('.chat-composer textarea').value`)) === '', 'the composer clears after sending')
+await compose('line one\nline two')
+await click('Send')
+await waitFor(`document.querySelectorAll('.bubble-row.is-mine').length === 2 && ${settled}`, 'second sent')
+check((await bubbles())[1] === 'line one\nline two', 'line breaks inside a message are kept')
+await go(APP + chatPath)
+await waitFor(`document.querySelectorAll('.bubble-row').length === 2`, 'after reload')
+check(true, 'after a reload, the messages are still there')
+await shot('29-chat')
+
+console.log('31. The other side')
+await signOut()
+await signIn(ana.email, newPassword)
+await waitFor(`document.querySelector('.person-list')`, 'ana chat list')
+check((await results()).includes('line one'), 'home shows the last message as a preview')
+await shot('30-home-chats')
+await evaluate(`document.querySelector('.chat-row').click()`)
+await waitFor(`document.querySelectorAll('.bubble-row').length === 2`, 'ana opens chat')
+check((await evaluate(`document.querySelectorAll('.bubble-row:not(.is-mine)').length`)) === 2, 'ben’s messages show on the other side for ana')
+await compose('Hello Ben')
+await pressEnter()
+await waitFor(`document.querySelectorAll('.bubble-row.is-mine').length === 1 && ${settled}`, 'ana sent')
+check(true, 'ana replies')
+
+console.log('32. A lost answer and a retry')
+await evaluate('window.__dropNextSendAnswer = true')
+await compose('Did this arrive?')
+await pressEnter()
+await waitFor(has('Not sent'), 'send looks failed')
+const stored = await rest(`messages?select=id&content=eq.${encodeURIComponent('Did this arrive?')}`)
+check(stored.length === 1, 'the app saw an error, but the message did reach the database')
+await click('Retry')
+await waitFor(settled, 'retried')
+check((await bubbles()).filter((b) => b === 'Did this arrive?').length === 1, 'retrying shows the message once')
+const afterRetry = await rest(`messages?select=id&content=eq.${encodeURIComponent('Did this arrive?')}`)
+check(afterRetry.length === 1 && afterRetry[0].id === stored[0].id, 'the retry reused the client_id: still one message in the database')
+
+console.log('33. Older messages')
+const chatId = chatPath.split('/')[2]
+const seeded = await restWrite(
+  'POST',
+  'messages',
+  Array.from({ length: 60 }, (_, i) => ({ conversation_id: chatId, client_id: crypto.randomUUID(), content: `Seeded ${i + 1}` })),
+)
+check(seeded.status === 201, `60 more messages sent through the API (${seeded.status})`)
+await go(APP + chatPath)
+await waitFor(`document.querySelectorAll('.bubble-row').length === 50`, 'first page')
+check((await text()).includes('Load older messages'), 'a chat opens with the newest 50 and offers older ones')
+check((await bubbles()).at(-1) === 'Seeded 60', '... newest at the bottom')
+await click('Load older messages')
+await waitFor(`document.querySelectorAll('.bubble-row').length === 64`, 'all loaded')
+const all = await bubbles()
+check(all[0] === 'Hi Ana' && new Set(all).size === all.length, 'loading older pages brings the rest, without repeats')
+check(!(await text()).includes('Load older messages'), 'the button goes once everything is loaded')
+
+console.log('34. Read only after unfriending')
+await go(`${APP}/u/${benName}`)
+await click('Unfriend')
+await waitFor(`document.querySelector('.confirm-box')`, 'confirm')
+await click('Unfriend @')
+await waitFor(has('View messages'), 'unfriended')
+check(true, 'a former friend’s profile offers View messages')
+await click('View messages')
+await waitFor(has("aren't friends any more"), 'read-only banner')
+check(!(await evaluate(`document.querySelector('.chat-composer')`)), 'the composer is replaced by a read-only note')
+await click('Load older messages')
+await waitFor(`document.querySelectorAll('.bubble-row').length === 64`, 'read-only history')
+check(true, 'the whole history, older pages included, is still readable')
+await shot('31-chat-read-only')
+const refused = await restWrite('POST', 'messages', { conversation_id: chatId, client_id: crypto.randomUUID(), content: 'sneaky' })
+check(refused.status === 403, `sending through the API is refused too (${refused.status})`)
+
+console.log('35. Chat on mobile')
+await makeFriends()
+await viewport(390, 844, true)
+await go(APP + chatPath)
+await waitFor(`document.querySelector('.chat-composer') && document.querySelectorAll('.bubble-row').length === 50`, 'mobile chat')
+await shot('32-chat-mobile')
+check(!(await evaluate('document.documentElement.scrollWidth > window.innerWidth')), 'the chat has no horizontal scroll at 390px')
+check(
+  await evaluate(`(() => { const s = document.querySelector('.chat-scroll'); return s.scrollHeight - s.scrollTop - s.clientHeight < 4 })()`),
+  'the chat opens scrolled to the newest message',
+)
 
 ws.close()
 console.log(process.exitCode ? 'Some checks FAILED' : 'All checks passed')

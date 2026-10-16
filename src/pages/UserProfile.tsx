@@ -13,6 +13,7 @@ import {
   type Person,
   type RelationState,
 } from '../lib/friends.ts'
+import { conversationWith } from '../lib/messages.ts'
 import { supabase } from '../lib/supabase.ts'
 
 type Loaded =
@@ -117,6 +118,7 @@ function ProfileView({ person, relation, isSelf, onRelation }: ViewProps) {
           </p>
         ) : (
           <>
+            <OpenChat key={person.user_id} userId={person.user_id} isFriend={relation.relation === 'friends'} />
             <RelationActions
               key={`${relation.relation}:${relation.request_id}`}
               userId={person.user_id}
@@ -159,5 +161,28 @@ function ProfileView({ person, relation, isSelf, onRelation }: ViewProps) {
         )}
       </div>
     </>
+  )
+}
+
+/** Opens your conversation, which exists from the first friendship on. */
+function OpenChat({ userId, isFriend }: { userId: string; isFriend: boolean }) {
+  const [conversationId, setConversationId] = useState<string | null>(null)
+
+  useEffect(() => {
+    let stale = false
+    conversationWith(userId).then(
+      (id) => !stale && setConversationId(id),
+      () => {}, // the button just doesn't appear
+    )
+    return () => {
+      stale = true
+    }
+  }, [userId, isFriend])
+
+  if (!conversationId) return null
+  return (
+    <Link to={`/c/${conversationId}`} className="button button-primary button-compact open-chat">
+      <span>{isFriend ? 'Message' : 'View messages'}</span>
+    </Link>
   )
 }

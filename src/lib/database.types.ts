@@ -228,6 +228,49 @@ export type Database = {
           },
         ];
       };
+      messages: {
+        Row: {
+          client_id: string;
+          content: string | null;
+          conversation_id: string;
+          created_at: string;
+          id: number;
+          sender_id: string | null;
+        };
+        ComputedFields: never;
+        Insert: {
+          client_id: string;
+          content?: string | null;
+          conversation_id: string;
+          created_at?: string;
+          id?: never;
+          sender_id?: string | null;
+        };
+        Update: {
+          client_id?: string;
+          content?: string | null;
+          conversation_id?: string;
+          created_at?: string;
+          id?: never;
+          sender_id?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "messages_conversation_id_fkey";
+            columns: ["conversation_id"];
+            isOneToOne: false;
+            referencedRelation: "conversations";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "messages_sender_member";
+            columns: ["conversation_id", "sender_id"];
+            isOneToOne: false;
+            referencedRelation: "conversation_members";
+            referencedColumns: ["conversation_id", "user_id"];
+          },
+        ];
+      };
       profiles: {
         Row: {
           avatar_path: string | null;
@@ -290,6 +333,42 @@ export type Database = {
     Functions: {
       block_user: { Args: { target: string }; Returns: undefined };
       cancel_friend_request: { Args: { request_id: string }; Returns: undefined };
+      messages_page: {
+        Args: {
+          before_created_at?: string;
+          before_id?: number;
+          conversation: string;
+          page_size?: number;
+        };
+        Returns: {
+          client_id: string;
+          content: string | null;
+          conversation_id: string;
+          created_at: string;
+          id: number;
+          sender_id: string | null;
+        }[];
+        SetofOptions: {
+          from: "*";
+          to: "messages";
+          isOneToOne: false;
+          isSetofReturn: true;
+        };
+      };
+      my_conversations: {
+        Args: { only_conversation?: string };
+        Returns: {
+          avatar_path: string;
+          conversation_id: string;
+          display_name: string;
+          is_friend: boolean;
+          last_at: string;
+          last_content: string;
+          last_sender_id: string;
+          other_id: string;
+          username: string;
+        }[];
+      };
       relationship_with: {
         Args: { other: string };
         Returns: {

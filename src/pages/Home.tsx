@@ -2,23 +2,23 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { useAuth } from '../auth/context.ts'
 import { AppHeader } from '../components/AppHeader.tsx'
-import { PersonRow } from '../components/PersonRow.tsx'
-import { friendsList, type Friend } from '../lib/friends.ts'
+import { Avatar } from '../components/Avatar.tsx'
+import { listTime } from '../lib/chatTime.ts'
+import { myConversations, type ConversationSummary } from '../lib/messages.ts'
 
-const since = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
-
-// Your friends. In milestone 6 each one opens your conversation.
+// Every conversation you're in: friends, and read-only ones with former
+// friends or deleted accounts (their history stays readable).
 export function Home() {
   const { session } = useAuth()
   const userId = session?.user.id
-  const [friends, setFriends] = useState<Friend[] | null>(null)
+  const [chats, setChats] = useState<ConversationSummary[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!userId) return
     let stale = false
-    friendsList(userId).then(
-      (list) => !stale && setFriends(list),
+    myConversations().then(
+      (list) => !stale && setChats(list),
       (e: Error) => !stale && setError(e.message),
     )
     return () => {
@@ -30,36 +30,54 @@ export function Home() {
     <div className="home">
       <AppHeader />
       <main className="settings page-wide">
-        <p className="eyebrow">Friends</p>
+        <p className="eyebrow">Chats</p>
         <h1 className="auth-title">Your people.</h1>
-        <p className="auth-subtitle">Chatting with them arrives in the next milestone.</p>
+        <p className="auth-subtitle">
+          Everyone you're friends with, and the history you kept with anyone you're not.
+        </p>
 
         {error && (
           <p className="form-error list-message" role="alert">
             {error}
           </p>
         )}
-        {!friends && !error && <p className="muted list-message">Loading…</p>}
-        {friends?.length === 0 && (
+        {!chats && !error && <p className="muted list-message">Loading…</p>}
+        {chats?.length === 0 && (
           <p className="list-message">
             No friends yet. <Link to="/people">Find your friends</Link> and send them a request.
           </p>
         )}
-        {friends && friends.length > 0 && (
-          <section className="request-section" aria-label="Friends">
-            <h2 className="section-title">
-              Friends <span className="muted">{friends.length}</span>
-            </h2>
-            <ul className="person-list">
-              {friends.map((friend) => (
-                <PersonRow key={friend.user_id} person={friend}>
-                  <span className="relation-label">Since {since.format(new Date(friend.since))}</span>
-                </PersonRow>
-              ))}
-            </ul>
-          </section>
+        {chats && chats.length > 0 && (
+          <ul className="person-list" aria-label="Chats">
+            {chats.map((chat) => (
+              <ChatRow key={chat.conversation_id} chat={chat} me={userId} />
+            ))}
+          </ul>
         )}
       </main>
     </div>
+  )
+}
+
+function ChatRow({ chat, me }: { chat: ConversationSummary; me: string | undefined }) {
+  const deleted = chat.other_id === null
+  const preview =
+    chat.last_content === null
+      ? 'No messages yet'
+      : `${chat.last_sender_id === me ? 'You: ' : ''}${chat.last_content}`
+  return (
+    <li className="person-row">
+      <Link to={`/c/${chat.conversation_id}`} className="person-link chat-row">
+        <Avatar profile={deleted ? null : chat} size={44} />
+        <span className="person-names">
+          <span className="chat-row-top">
+            <strong className="text-strong">{deleted ? 'Deleted user' : chat.display_name}</strong>
+            {!chat.is_friend && <span className="tag">Read only</span>}
+          </span>
+          <span className="muted">{preview}</span>
+        </span>
+        {chat.last_at && <span className="chat-row-time">{listTime(chat.last_at)}</span>}
+      </Link>
+    </li>
   )
 }

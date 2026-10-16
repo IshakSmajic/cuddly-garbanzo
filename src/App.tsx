@@ -1,6 +1,7 @@
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router'
 import { AuthProvider } from './auth/AuthProvider.tsx'
 import { Gate } from './auth/Gate.tsx'
+import { Chat } from './pages/Chat.tsx'
 import { CheckEmail } from './pages/CheckEmail.tsx'
 import { ForgotPassword } from './pages/ForgotPassword.tsx'
 import { Home } from './pages/Home.tsx'
@@ -39,6 +40,7 @@ const router = createBrowserRouter([
       { path: '/people', element: <People /> },
       { path: '/requests', element: <Requests /> },
       { path: '/u/:username', element: <UserProfile /> },
+      { path: '/c/:conversationId', element: <Chat /> },
     ],
   },
   { path: '*', element: <Navigate to="/" replace /> },

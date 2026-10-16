@@ -85,25 +85,6 @@ export async function pendingRequests(userId: string) {
   return { incoming, outgoing }
 }
 
-export type Friend = Person & { since: string }
-
-/** Your friends, sorted by name. RLS returns only friendships you're in. */
-export async function friendsList(userId: string): Promise<Friend[]> {
-  const rows =
-    (await call(
-      supabase
-        .from('friendships')
-        .select(
-          `created_at, user_low_id,
-           low:profiles!friendships_user_low_id_fkey(${PERSON}),
-           high:profiles!friendships_user_high_id_fkey(${PERSON})`,
-        ),
-    )) ?? []
-  return rows
-    .map((row) => ({ ...(row.user_low_id === userId ? row.high : row.low), since: row.created_at }))
-    .sort((a, b) => (a.display_name ?? '').localeCompare(b.display_name ?? ''))
-}
-
 export async function incomingRequestCount(userId: string): Promise<number> {
   const { count, error } = await supabase
     .from('friend_requests')

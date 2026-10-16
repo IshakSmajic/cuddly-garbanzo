@@ -1,7 +1,7 @@
 # Thread Buddies — progress and handoff
 
-Last updated: 16 October 2026, after milestone 5 (built and checked on
-`milestone-5-friendships`; not yet committed).
+Last updated: 16 October 2026, after milestone 6 (built and checked on
+`milestone-6-messages`; not yet committed).
 
 This file is the running record of the project: what is done, what is live,
 what was decided, and what comes next. Read it at the start of a session and
@@ -18,9 +18,9 @@ are in `CLAUDE.md`.
 | 2b | Password reset (follow-up to milestone 2) | Done (commit "Milestone 2b: password reset") |
 | 3 | Profiles and avatars: profile editor, avatar upload/replace/remove, rename to Thread Buddies | Done (commits "Profile picture functionality and upload", "Avatar delete guard and error code fix") |
 | 4 | User discovery and requests: search, send/cancel/accept/decline, blocking (+ the `friendships` table) | Done (commit `109b360`, message typo "Fruend") |
-| 5 | Friendships: friend list, unfriend, accept creates the conversation | Built on `milestone-5-friendships`, all checks pass; awaiting commit |
-| 6 | Direct messaging persistence: history, friends-only sending, paging | **Next.** Plan outline below |
-| 7 | Realtime messaging: live delivery, reconnect recovery, dedupe | Not started |
+| 5 | Friendships: friend list, unfriend, accept creates the conversation | Done (commit `ce0e4c6`) |
+| 6 | Direct messaging persistence: history, friends-only sending, paging | Built on `milestone-6-messages`, all checks pass; awaiting commit |
+| 7 | Realtime messaging: live delivery, reconnect recovery, dedupe | **Next.** Plan outline below |
 | 8 | Chat UX: typing, presence, unread counts, read receipts | Not started |
 | 9 | Media: image messages | Not started |
 | 10 | Release: deploy (Vercel + Gmail SMTP), security review, mobile polish | Not started |
@@ -66,7 +66,7 @@ Milestones 1–7 make the app usable by friends; 8–10 improve it.
 
 ### Local Supabase (Docker, 12 containers)
 
-- All seven migrations applied (through `conversations`). Auth settings in `supabase/config.toml`:
+- All eight migrations applied (through `messages`). Auth settings in `supabase/config.toml`:
   email confirmation on, minimum password 8, site URL `http://localhost:5173`,
   redirect allow-list (exact URLs) `http://localhost:5173`,
   `http://localhost:5173/reset-password` and the same two on `127.0.0.1`,
@@ -80,7 +80,7 @@ Milestones 1–7 make the app usable by friends; 8–10 improve it.
 
 - Linked to the repo. Has migrations 1 and 2 only, so the public schema is
   **empty**. The demo tables and the demo accounts (alice/bob) are deleted.
-- **Not yet applied:** the profiles, avatars, avatar-fixes, friend-requests and conversations migrations, the auth settings (site URL,
+- **Not yet applied:** the profiles, avatars, avatar-fixes, friend-requests, conversations and messages migrations, the auth settings (site URL,
   redirect URLs including `/reset-password`, confirm email, password length,
   secure password change, password-changed notification). Custom SMTP
   (Gmail) **is** configured (open item 2).
@@ -371,6 +371,54 @@ Behaviour worth knowing:
   conversation, re-friending reuses it, checked through the API with the
   user's own session).
 
+### Milestone 6: direct messages
+
+**Database** (`supabase/migrations/20261016072611_messages.sql`):
+
+- `messages`: bigint identity id, `conversation_id` (cascade with the
+  conversation), `sender_id` (default `auth.uid()`), `client_id`, `content`
+  (1–4,000 characters with at least one non-space; nullable for images
+  later), `created_at`. UNIQUE (sender_id, client_id). Composite FK
+  (conversation_id, sender_id) → `conversation_members` with
+  `ON DELETE SET NULL (sender_id)`: account deletion keeps the messages as
+  "Deleted user"; when both accounts are gone, the empty-conversation trigger
+  removes the conversation and its messages (checked through the Auth API).
+- **Writes:** clients insert directly. Grant `insert (conversation_id,
+  client_id, content)` only, so sender, time and id always come from the
+  database. Insert policy: sender is you, content not null, and a
+  `friendships` row exists for the conversation's pair. No update/delete
+  grants (editing/deleting is out of scope).
+- **Reads:** members (`is_conversation_member`).
+- `messages_page(conversation, before_created_at, before_id, page_size)`:
+  keyset paging on (created_at, id), 50 by default, at most 100. Security
+  invoker.
+- `my_conversations(only_conversation)`: the chat list (other person or null,
+  `is_friend`, last message), newest activity first. Security invoker.
+- Tests: `messages.test.sql` (35 checks, including paging through 120
+  messages with duplicate timestamps). `demo_removed.test.sql` now checks the
+  new table isn't the demo's.
+
+**Frontend:**
+
+| File | Role |
+|---|---|
+| `src/pages/Chat.tsx` | `/c/:conversationId`: history, "Load older", composer (Enter sends, Shift+Enter new line, counter from 3,500), pending/failed bubbles with Retry, read-only note |
+| `src/pages/Home.tsx` | The chat list: every conversation, preview ("You: …"), time, "Read only" |
+| `src/pages/UserProfile.tsx` | "Message" (friends) / "View messages" (former friends) |
+| `src/lib/messages.ts` | RPC and insert wrappers; `sendMessage` treats `23505` as "already stored" and fetches the row by client_id |
+| `src/lib/messageRules.ts` | Limits, trimming, `timeKey` (microseconds from PostgREST timestamps), ordering and merge-by-id (+ tests) |
+| `src/lib/chatTime.ts` | Today/Yesterday/weekday/date labels (+ tests) |
+
+Behaviour worth knowing:
+
+- No live updates yet: the other person's messages appear on reload or
+  when you open the chat again (milestone 7).
+- Below 480 px the app header is hidden on the chat screen (the chat header
+  has a back button).
+- e2e: 111 checks. Section 32 installs a fetch wrapper before the app loads
+  (`Page.addScriptToEvaluateOnNewDocument`) to drop the *answer* to one send,
+  then checks Retry leaves exactly one message in the database.
+
 ## Decisions
 
 Accepted by the developer (spec section 11):
@@ -398,6 +446,9 @@ stay in your search, marked blocked.
 Also decided (milestone 5, 16 Oct 2026): friend list on Home; deleting an
 account nulls that side of `direct_conversations` and removes their
 membership; a conversation with no members left is deleted.
+
+Also decided (milestone 6): Home is the chat list, including read-only
+conversations; no message rate limit for now.
 
 Recommendations not yet explicitly confirmed (fine to follow, but mention them
 when they come up): Supabase Realtime before a custom WebSocket server; no
@@ -448,7 +499,7 @@ by Claude to match it.
      should be able to sign in).
    Spec sections 2, 4 and 9 updated (spec v2.3).
 4. **Hosted project setup** (at deployment): push the pending migrations
-   (profiles, avatars, avatar fixes, friend requests, conversations), apply the auth settings. SMTP is done. Ask first.
+   (profiles, avatars, avatar fixes, friend requests, conversations, messages), apply the auth settings. SMTP is done. Ask first.
 5. Bundle is ~261 kB (83 kB gzipped). Fine for now; code-split later.
 6. Accessibility note, left as designed: white text on `#f55252` is about
    3.2:1 contrast, below 4.5:1. Near-black text on the red would pass.
@@ -464,33 +515,33 @@ by Claude to match it.
 
 ## Next phase
 
-### Milestone 6: direct messaging persistence (spec sections 3, 5 and 8)
+### Milestone 7: realtime messaging (spec section 8)
 
 Plan outline to present for approval:
 
-- **Table** `messages` as in spec section 5: bigint identity id,
-  `conversation_id`, `sender_id`, `client_id` (UUID made by the client),
-  `content` 1–4,000 chars, `created_at`; UNIQUE (sender_id, client_id) for
-  idempotent retries; index (conversation_id, created_at desc, id desc).
-- **Delete rules to settle:** spec says `sender_id ON DELETE SET NULL`
-  ("Deleted user") with a composite FK (conversation_id, sender_id) →
-  conversation_members. Membership cascades on account deletion, so the
-  composite FK needs `ON DELETE SET NULL (sender_id)` (Postgres 15+; the
-  stack runs 17). Messages cascade from conversations (empty-conversation
-  trigger).
-- **Write path:** clients insert directly under RLS (spec): sender is you,
-  you're a member, and a `friendships` row exists for the pair in
-  `direct_conversations`. Column grants: insert only (conversation_id,
-  client_id, content); no update/delete for now (editing/deleting messages
-  is not in scope; confirm).
-- **Reading:** members only (`is_conversation_member`); keyset pagination
-  (`created_at, id` < cursor), 50 per page.
-- **UI:** a conversation screen opened from the friend list (`/c/:id` or
-  `/chat/:username`), history with "load older", composer with retry using
-  the same client_id, read-only banner after unfriend/block.
-- **Tests:** pgTAP for sending as non-friend/non-member/someone else,
-  idempotent retry, length limits, pagination order, history after unfriend
-  and account deletion; e2e for send, reload, older pages, former friends.
+- **Transport:** Supabase Realtime `postgres_changes` (recommended in the
+  spec, not yet explicitly confirmed; confirm). Add `messages` to the
+  `supabase_realtime` publication. Each subscriber gets only rows its SELECT
+  policy allows, so delivery follows `is_conversation_member`.
+- **Subscriptions:** the open chat listens for inserts filtered by
+  `conversation_id`; Home listens for new messages in your conversations to
+  reorder and update previews; maybe the header badge listens to
+  `friend_requests` (replacing the window event).
+- **Recovery:** on (re)subscribe and on returning to the tab, re-fetch from
+  slightly before the newest message's `created_at` (ids are assigned at
+  insert but rows become visible at commit, so `id > last` can miss rows),
+  merge by id (`mergeMessages` already dedupes). Own sends arrive twice
+  (insert answer + event): dedupe by id.
+- **Lifecycle to explain:** websocket connect, JWT on the channel, heartbeat,
+  `SUBSCRIBED`/`CHANNEL_ERROR`/`TIMED_OUT`/`CLOSED`, token refresh, a small
+  "reconnecting" indicator.
+- **Read-only changes live?** When unfriended while the chat is open, the
+  next send fails and the banner appears (already). Optionally subscribe to
+  `friendships` deletes too.
+- **Tests:** e2e with two browser contexts (CDP `Target.createBrowserContext`)
+  for live delivery both ways, going offline and back
+  (`Network.emulateNetworkConditions`) and catching up, no duplicates;
+  pgTAP that the publication includes `messages` and RLS still filters.
 
 ## Tooling and gotchas
 
