@@ -64,3 +64,98 @@ export function onResume(callback: () => void): () => void {
     window.removeEventListener('online', callback)
   }
 }
+
+// Private channels (Broadcast and Presence) ------------------------------------------
+// These don't go through table RLS: Realtime checks the policies on
+// realtime.messages for the channel's name when a client joins (see the
+// chat_ux migration). Channel names are fixed ("conversation:<id>",
+// "user:<id>"), and realtime-js hands back the existing channel for a name
+// that is still leaving, so one channel per name is shared here: listeners
+// come and go, and the channel is removed a moment after the last one leaves
+// (a quick remount, like React's StrictMode, keeps it).
+
+type PresenceState = Record<string, unknown[]>
+
+export type PrivateListener = {
+  onBroadcast?: (event: string, payload: Record<string, unknown>) => void
+  onPresence?: (state: PresenceState) => void
+  onState?: (state: LiveState) => void
+}
+
+type Shared = {
+  channel: ReturnType<typeof supabase.channel>
+  listeners: Set<PrivateListener>
+  state: LiveState
+  presence: PresenceState
+  removal?: ReturnType<typeof setTimeout>
+}
+
+const shared = new Map<string, Shared>()
+
+export type PrivateChannel = {
+  send: (event: string, payload: Record<string, unknown>) => void
+  track: (payload: Record<string, unknown>) => void
+  leave: () => void
+}
+
+/**
+ * Joins (or shares) a private channel. `presence` turns Presence on for it;
+ * `presence.key` is the key you announce under (only on your own channel).
+ */
+export function joinPrivate(
+  topic: string,
+  listener: PrivateListener,
+  options: { presence?: { key?: string } } = {},
+): PrivateChannel {
+  let entry = shared.get(topic)
+  if (entry?.removal) {
+    clearTimeout(entry.removal)
+    entry.removal = undefined
+  }
+  if (!entry) {
+    const channel = supabase.channel(topic, {
+      config: {
+        private: true,
+        broadcast: { self: false },
+        ...(options.presence && { presence: { key: options.presence.key ?? '' } }),
+      },
+    })
+    const created: Shared = { channel, listeners: new Set(), state: 'connecting', presence: {} }
+    channel.on('broadcast', { event: '*' }, (message) =>
+      created.listeners.forEach((l) => l.onBroadcast?.(message.event, message.payload ?? {})),
+    )
+    // Only bind Presence where wanted: with it on, Realtime also checks the
+    // presence policies when joining.
+    if (options.presence) {
+      channel.on('presence', { event: 'sync' }, () => {
+        created.presence = channel.presenceState()
+        created.listeners.forEach((l) => l.onPresence?.(created.presence))
+      })
+    }
+    channel.subscribe((status) => {
+      const wasLive = created.state !== 'connecting'
+      created.state = status === 'SUBSCRIBED' ? 'live' : wasLive ? 'reconnecting' : 'connecting'
+      created.listeners.forEach((l) => l.onState?.(created.state))
+    })
+    shared.set(topic, created)
+    entry = created
+  }
+
+  const current = entry
+  current.listeners.add(listener)
+  listener.onState?.(current.state)
+  if (Object.keys(current.presence).length) listener.onPresence?.(current.presence)
+
+  return {
+    send: (event, payload) => void current.channel.send({ type: 'broadcast', event, payload }),
+    track: (payload) => void current.channel.track(payload),
+    leave: () => {
+      current.listeners.delete(listener)
+      if (current.listeners.size > 0) return
+      current.removal = setTimeout(() => {
+        shared.delete(topic)
+        void supabase.removeChannel(current.channel)
+      }, 1000)
+    },
+  }
+}

@@ -8,6 +8,7 @@ import {
   messageLength,
   mergeMessages,
   prepareMessage,
+  seenMessageId,
   timeKey,
   type Message,
 } from './messageRules.ts'
@@ -97,5 +98,30 @@ describe('catchUp', () => {
 
   it('an empty chat simply takes the page', () => {
     expect(catchUp([], page(1, 3), 5)).toEqual({ messages: page(1, 3), gap: false })
+  })
+})
+
+describe('seenMessageId', () => {
+  const at = (second: number) => `2026-10-16T07:00:${String(second).padStart(2, '0')}+00:00`
+  const from = (id: number, sender: string) => ({ ...message(id, at(id)), sender_id: sender })
+  const chat = [from(1, 'me'), from(2, 'them'), from(3, 'me'), from(4, 'me'), from(5, 'them')]
+
+  it('marks my newest message the other person has read up to', () => {
+    expect(seenMessageId(chat, 'me', { id: 4, created_at: at(4) })).toBe(4)
+    expect(seenMessageId(chat, 'me', { id: 3, created_at: at(3) })).toBe(3)
+  })
+
+  it('a later message of theirs still counts as reading mine before it', () => {
+    expect(seenMessageId(chat, 'me', { id: 5, created_at: at(5) })).toBe(4)
+  })
+
+  it('nothing before they have read anything of mine', () => {
+    expect(seenMessageId(chat, 'me', null)).toBeNull()
+    expect(seenMessageId(chat.slice(1, 2), 'me', { id: 2, created_at: at(2) })).toBeNull()
+  })
+
+  it('compares by time first, so an older id read later still counts', () => {
+    const late = [{ ...from(9, 'me'), created_at: at(1) }, from(2, 'them')]
+    expect(seenMessageId(late, 'me', { id: 2, created_at: at(2) })).toBe(9)
   })
 })

@@ -86,6 +86,13 @@ export type Database = {
             referencedColumns: ["id"];
           },
           {
+            foreignKeyName: "conversation_members_last_read_message";
+            columns: ["last_read_message_id"];
+            isOneToOne: false;
+            referencedRelation: "messages";
+            referencedColumns: ["id"];
+          },
+          {
             foreignKeyName: "conversation_members_user_id_fkey";
             columns: ["user_id"];
             isOneToOne: false;
@@ -333,6 +340,7 @@ export type Database = {
     Functions: {
       block_user: { Args: { target: string }; Returns: undefined };
       cancel_friend_request: { Args: { request_id: string }; Returns: undefined };
+      mark_read: { Args: { conversation: string; message: number }; Returns: undefined };
       messages_page: {
         Args: {
           before_created_at?: string;
@@ -366,6 +374,7 @@ export type Database = {
           last_content: string;
           last_sender_id: string;
           other_id: string;
+          unread_count: number;
           username: string;
         }[];
       };

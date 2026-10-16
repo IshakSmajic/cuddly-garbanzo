@@ -1,62 +1,17 @@
-import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
+import { useChats } from '../app/chats.ts'
 import { useAuth } from '../auth/context.ts'
 import { AppHeader } from '../components/AppHeader.tsx'
 import { Avatar } from '../components/Avatar.tsx'
 import { listTime } from '../lib/chatTime.ts'
-import { timeKey, type Message } from '../lib/messageRules.ts'
-import { myConversations, type ConversationSummary } from '../lib/messages.ts'
-import { onResume, subscribe } from '../lib/realtime.ts'
+import type { ConversationSummary } from '../lib/messages.ts'
 
 // Every conversation you're in: friends, and read-only ones with former
-// friends or deleted accounts (their history stays readable).
+// friends or deleted accounts (their history stays readable). The list
+// itself is kept live by AppShell.
 export function Home() {
   const { session } = useAuth()
-  const userId = session?.user.id
-  const [chats, setChats] = useState<ConversationSummary[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const shown = useRef(chats)
-  useEffect(() => {
-    shown.current = chats
-  }, [chats])
-
-  useEffect(() => {
-    if (!userId) return
-    let stale = false
-    const load = () =>
-      myConversations().then(
-        (list) => !stale && setChats(list),
-        (e: Error) => !stale && setError(e.message),
-      )
-    void load()
-
-    // RLS sends only messages from your own conversations. A known chat gets
-    // its preview updated and moves to the top; an unknown one (a friendship
-    // made in another tab) means the list is out of date.
-    const stopMessages = subscribe<Message>({
-      table: 'messages',
-      event: 'INSERT',
-      onChange: (payload) => {
-        const m = payload.new as Message
-        if (!shown.current?.some((c) => c.conversation_id === m.conversation_id)) return void load()
-        setChats((cs) => cs && withMessage(cs, m))
-      },
-      onReady: () => void load(),
-    })
-    // One of your requests accepted: a new chat exists.
-    const stopRequests = subscribe({
-      table: 'friend_requests',
-      event: 'UPDATE',
-      onChange: (payload) => (payload.new as { status: string }).status === 'accepted' && void load(),
-    })
-    const stopResume = onResume(() => void load())
-    return () => {
-      stale = true
-      stopMessages()
-      stopRequests()
-      stopResume()
-    }
-  }, [userId])
+  const { chats, error, isOnline } = useChats()
 
   return (
     <div className="home">
@@ -82,7 +37,12 @@ export function Home() {
         {chats && chats.length > 0 && (
           <ul className="person-list" aria-label="Chats">
             {chats.map((chat) => (
-              <ChatRow key={chat.conversation_id} chat={chat} me={userId} />
+              <ChatRow
+                key={chat.conversation_id}
+                chat={chat}
+                me={session?.user.id}
+                online={isOnline(chat.other_id)}
+              />
             ))}
           </ul>
         )}
@@ -91,36 +51,37 @@ export function Home() {
   )
 }
 
-function ChatRow({ chat, me }: { chat: ConversationSummary; me: string | undefined }) {
+function ChatRow({ chat, me, online }: { chat: ConversationSummary; me: string | undefined; online: boolean }) {
   const deleted = chat.other_id === null
+  const name = deleted ? 'Deleted user' : chat.display_name
   const preview =
     chat.last_content === null
       ? 'No messages yet'
       : `${chat.last_sender_id === me ? 'You: ' : ''}${chat.last_content}`
+  const unread = chat.unread_count > 0
   return (
     <li className="person-row">
-      <Link to={`/c/${chat.conversation_id}`} className="person-link chat-row">
-        <Avatar profile={deleted ? null : chat} size={44} />
+      <Link
+        to={`/c/${chat.conversation_id}`}
+        className={`person-link chat-row${unread ? ' is-unread' : ''}`}
+        aria-label={`${name}${unread ? `, ${chat.unread_count} unread` : ''}${online ? ', online' : ''}`}
+      >
+        <span className="avatar-wrap">
+          <Avatar profile={deleted ? null : chat} size={44} />
+          {online && <span className="online-dot" />}
+        </span>
         <span className="person-names">
           <span className="chat-row-top">
-            <strong className="text-strong">{deleted ? 'Deleted user' : chat.display_name}</strong>
+            <strong className="text-strong">{name}</strong>
             {!chat.is_friend && <span className="tag">Read only</span>}
           </span>
-          <span className="muted">{preview}</span>
+          <span className="muted chat-preview">{preview}</span>
         </span>
-        {chat.last_at && <span className="chat-row-time">{listTime(chat.last_at)}</span>}
+        <span className="chat-row-side">
+          {chat.last_at && <span className="chat-row-time">{listTime(chat.last_at)}</span>}
+          {unread && <span className="unread-badge">{chat.unread_count}</span>}
+        </span>
       </Link>
     </li>
   )
-}
-
-/** The list with `m` as its chat's last message, most recent chat first. */
-function withMessage(chats: ConversationSummary[], m: Message): ConversationSummary[] {
-  return chats
-    .map((c) =>
-      c.conversation_id === m.conversation_id
-        ? { ...c, last_content: m.content, last_sender_id: m.sender_id, last_at: m.created_at }
-        : c,
-    )
-    .sort((a, b) => (b.last_at ? timeKey(b.last_at) : 0) - (a.last_at ? timeKey(a.last_at) : 0))
 }

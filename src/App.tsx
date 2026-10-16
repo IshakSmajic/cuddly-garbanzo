@@ -1,4 +1,5 @@
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router'
+import { AppShell } from './app/AppShell.tsx'
 import { AuthProvider } from './auth/AuthProvider.tsx'
 import { Gate } from './auth/Gate.tsx'
 import { Chat } from './pages/Chat.tsx'
@@ -35,12 +36,18 @@ const router = createBrowserRouter([
   {
     element: <Gate area="app" />,
     children: [
-      { path: '/', element: <Home /> },
-      { path: '/settings/profile', element: <ProfileSettings /> },
-      { path: '/people', element: <People /> },
-      { path: '/requests', element: <Requests /> },
-      { path: '/u/:username', element: <UserProfile /> },
-      { path: '/c/:conversationId', element: <Chat /> },
+      {
+        // Chat list, online status and your own presence for every page below.
+        element: <AppShell />,
+        children: [
+          { path: '/', element: <Home /> },
+          { path: '/settings/profile', element: <ProfileSettings /> },
+          { path: '/people', element: <People /> },
+          { path: '/requests', element: <Requests /> },
+          { path: '/u/:username', element: <UserProfile /> },
+          { path: '/c/:conversationId', element: <Chat /> },
+        ],
+      },
     ],
   },
   { path: '*', element: <Navigate to="/" replace /> },

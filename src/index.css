@@ -1063,3 +1063,81 @@ textarea.field-input {
   font-size: 13px;
   text-align: center;
 }
+
+/* Unread, online, typing, seen -------------------------------------------------- */
+.avatar-wrap {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+
+.online-dot {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--black-1);
+  border-radius: 50%;
+  background: #3ecf6e;
+}
+
+.online-label {
+  color: #3ecf6e;
+}
+
+.chat-row-side {
+  display: grid;
+  justify-items: end;
+  align-self: flex-start;
+  gap: 6px;
+  flex: none;
+}
+
+.chat-row .chat-row-time {
+  align-self: auto;
+}
+
+.unread-badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--red);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.chat-row.is-unread .chat-preview {
+  color: var(--white);
+}
+
+.chat-row.is-unread .chat-row-time {
+  color: var(--red);
+}
+
+.bubble-seen {
+  margin-top: 3px;
+  color: var(--grey-2);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.chat-typing {
+  align-self: flex-start;
+  margin-top: 4px;
+  color: var(--grey-2);
+  font-size: 13px;
+  font-style: italic;
+}
+
+/* Chat rows always span the row, so time and badge sit at the right edge
+   (narrow screens stack person rows). */
+.person-row > .chat-row {
+  align-self: stretch;
+  width: 100%;
+}

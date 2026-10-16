@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { useAuth } from '../auth/context.ts'
 import { AppHeader } from '../components/AppHeader.tsx'
@@ -16,6 +16,10 @@ export function Requests() {
   const userId = session?.user.id
   const [lists, setLists] = useState<Lists | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const shown = useRef(lists)
+  useEffect(() => {
+    shown.current = lists
+  }, [lists])
 
   useEffect(() => {
     if (!userId) return
@@ -28,14 +32,19 @@ export function Requests() {
       )
     void load()
 
-    // Live: a new request (either way) reloads the lists. An answer from the
-    // other side, or a cancel by the requester, removes the row. Our own
-    // accept or decline is already shown by the row itself.
+    // Live: a new request (either way) reloads the lists, unless it is
+    // already shown (its event can arrive after the first load, and a reload
+    // would drop a row just accepted here). An answer from the other side, or
+    // a cancel by the requester, removes the row. Our own accept or decline
+    // is already shown by the row itself.
     const stop = subscribe<Request>({
       table: 'friend_requests',
       event: '*',
       onChange: (payload) => {
-        if (payload.eventType === 'INSERT') return void load()
+        if (payload.eventType === 'INSERT') {
+          const known = shown.current && [...shown.current.incoming, ...shown.current.outgoing].some((r) => r.id === payload.new.id)
+          return known ? undefined : void load()
+        }
         if (payload.eventType !== 'UPDATE' || payload.new.status === 'pending') return
         if (payload.new.requester_id === me) drop('outgoing', payload.new.id)
         else if (payload.new.status === 'cancelled') drop('incoming', payload.new.id)

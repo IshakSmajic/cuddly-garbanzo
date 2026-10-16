@@ -74,3 +74,23 @@ export function catchUp(existing: Message[], latestPage: Message[], pageSize: nu
   )
   return { messages: gap ? latestPage : mergeMessages(existing, latestPage), gap }
 }
+
+/** A reading position: the last message someone has read. */
+export type ReadMark = { id: number; created_at: string }
+
+/** True if `m` is at or before the reading position. */
+export function isReadAt(m: ReadMark, position: ReadMark): boolean {
+  const a = timeKey(m.created_at)
+  const b = timeKey(position.created_at)
+  return a < b || (a === b && m.id <= position.id)
+}
+
+/** Where "Seen" goes: the newest of my messages the other person has read up to. */
+export function seenMessageId(messages: Message[], me: string, position: ReadMark | null): number | null {
+  if (!position) return null
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m && m.sender_id === me && isReadAt(m, position)) return m.id
+  }
+  return null
+}

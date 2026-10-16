@@ -17,6 +17,8 @@ export type ConversationSummary = {
   last_content: string | null
   last_sender_id: string | null
   last_at: string | null
+  /** Messages from the other person after your reading position. */
+  unread_count: number
 }
 
 /** Every conversation you're in, the most recently active first. */
@@ -90,4 +92,27 @@ export async function sendMessage(conversationId: string, clientId: string, cont
   if (error.code === '42501') throw new SendError("You can't send messages in this chat any more.", true)
   if (error.code === '23514') throw new SendError('Messages must be 1 to 4,000 characters.')
   throw new SendError("Couldn't send. Check your connection and try again.")
+}
+
+/** Moves your reading position forward (never back); the database tells the other person. */
+export async function markRead(conversationId: string, messageId: number): Promise<void> {
+  const { error } = await supabase.rpc('mark_read', { conversation: conversationId, message: messageId })
+  if (error) throw new Error("Couldn't update your reading position.")
+}
+
+export type ReadPosition = { id: number; created_at: string }
+
+/**
+ * How far the other person has read, from the table (the source of truth;
+ * a "read" broadcast is only a cue to call this).
+ */
+export async function otherReadPosition(conversationId: string, me: string): Promise<ReadPosition | null> {
+  const { data, error } = await supabase
+    .from('conversation_members')
+    .select('user_id, read:messages!conversation_members_last_read_message(id, created_at)')
+    .eq('conversation_id', conversationId)
+    .neq('user_id', me)
+    .maybeSingle()
+  if (error) throw new Error("Couldn't load read receipts.")
+  return data?.read ?? null
 }

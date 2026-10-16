@@ -99,6 +99,10 @@ async function type(label, value) {
   })()`)
 }
 async function click(textContent) {
+  await waitFor(
+    `[...document.querySelectorAll('button, a')].some(b => b.innerText.trim().startsWith(${JSON.stringify(textContent)}))`,
+    `button ${textContent}`,
+  )
   await evaluate(`(() => {
     const el = [...document.querySelectorAll('button, a')].find(b => b.innerText.trim().startsWith(${JSON.stringify(textContent)}));
     if (!el) throw new Error('no button ${textContent}');
@@ -901,6 +905,8 @@ async function openSecondBrowser() {
   const target = (await (await fetch('http://127.0.0.1:9333/json')).json()).find((t) => t.id === targetId)
   const page2 = await connect(target.webSocketDebuggerUrl)
   await page2.call('Page.enable')
+  // A background tab can report itself hidden; chats only mark read when visible.
+  await page2.call('Emulation.setFocusEmulationEnabled', { enabled: true })
   await page2.call('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false })
   const evaluate2 = async (expr) => {
     const r = await page2.call('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true })
@@ -936,6 +942,10 @@ async function openSecondBrowser() {
       })()`)
     },
     async click(textContent) {
+      await waitFor2(
+        `[...document.querySelectorAll('button, a')].some(b => b.innerText.trim().startsWith(${JSON.stringify(textContent)}))`,
+        `button ${textContent}`,
+      )
       await evaluate2(`(() => {
         const el = [...document.querySelectorAll('button, a')].find(b => b.innerText.trim().startsWith(${JSON.stringify(textContent)}));
         if (!el) throw new Error('no button ${textContent}');
@@ -1077,6 +1087,114 @@ await anaBrowser.say('While you were away')
 await waitFor(`${isLive} && [...document.querySelectorAll('.bubble-text')].some(b => b.innerText === 'While you were away')`, 'reconnected', 30000)
 check(!(await text()).includes('Reconnecting…'), 'it reconnects by itself and the notice goes')
 check((await countOf('While you were away')) === 1, 'the message sent meanwhile appears once')
+
+await send('Emulation.setFocusEmulationEnabled', { enabled: true })
+check(
+  (await evaluate('document.visibilityState')) === 'visible' && (await anaBrowser.evaluate('document.visibilityState')) === 'visible',
+  'both browsers count as visible (chats only mark read when visible)',
+)
+const anaTypes = (value) =>
+  anaBrowser.evaluate(`(() => {
+    const el = document.querySelector('.chat-composer textarea');
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(el, ${JSON.stringify(value)});
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`)
+const homeRow = `[...document.querySelectorAll('.chat-row')].find(r => r.innerText.includes('Ana Edited'))`
+
+console.log('42. Typing')
+await anaBrowser.waitFor(isLive, 'ana live for typing')
+await anaTypes('I am writ')
+await waitFor(`document.querySelector('.chat-typing')?.innerText === 'Ana Edited is typing…'`, 'typing shown', 5000)
+check(true, 'ben sees “Ana Edited is typing…” while she types')
+await shot('35-chat-typing')
+await anaBrowser.say('I am writing back')
+await waitFor(`!document.querySelector('.chat-typing')`, 'typing cleared', 3000)
+check(true, 'the indicator goes when her message arrives')
+await anaTypes('and more')
+await waitFor(`document.querySelector('.chat-typing')`, 'typing right after sending', 3000)
+check(true, 'typing again right after sending shows the indicator at once')
+await anaBrowser.say('and more')
+
+console.log('43. Seen')
+await compose('Did you see this?')
+await pressEnter()
+await waitFor(settled, 'sent for seen')
+await anaBrowser.waitFor(`[...document.querySelectorAll('.bubble-text')].some(b => b.innerText === 'Did you see this?')`, 'ana got it')
+await waitFor(
+  `(() => { const rows = [...document.querySelectorAll('.bubble-row.is-mine')]; const last = rows.at(-1); return last?.innerText.includes('Did you see this?') && last.querySelector('.bubble-seen') })()`,
+  'seen',
+  5000,
+)
+check(true, 'with ana looking at the chat, “Seen” appears under ben’s message, live')
+check((await evaluate(`document.querySelectorAll('.bubble-seen').length`)) === 1, '“Seen” shows once, under the newest message she has read')
+await shot('36-chat-seen')
+
+console.log('44. Unread counts')
+await go(APP + '/')
+await waitFor(`${homeRow}`, 'ben home')
+await anaBrowser.go(APP + '/') // ana leaves the chat, so nothing she sends is read yet
+await anaBrowser.waitFor(`document.querySelector('.chat-row')`, 'ana home')
+await anaBrowser.go(APP + chatPath)
+await anaBrowser.waitFor(isLive, 'ana live again')
+await anaBrowser.say('Unread one')
+await anaBrowser.say('Unread two')
+await waitFor(`${homeRow}?.querySelector('.unread-badge')?.innerText === '2'`, 'unread 2', 5000)
+check(true, 'two new messages show as 2 unread on ben’s home, live')
+check((await evaluate('document.title')) === '(2) Thread Buddies', 'the tab title shows the unread total')
+check((await evaluate(`${homeRow}.innerText`)).includes('Unread two'), '... with the newest as the preview')
+await shot('37-home-unread')
+await evaluate(`${homeRow}.click()`)
+await waitFor(`location.pathname.startsWith('/c/') && document.querySelectorAll('.bubble-row').length > 0`, 'open chat')
+await anaBrowser.waitFor(
+  `(() => { const last = [...document.querySelectorAll('.bubble-row.is-mine')].at(-1); return last?.querySelector('.bubble-seen') && last.innerText.includes('Unread two') })()`,
+  'ana sees seen',
+  5000,
+)
+check(true, 'opening the chat marks it read: ana sees “Seen” under her last message')
+await go(APP + '/')
+await waitFor(`${homeRow} && !${homeRow}.querySelector('.unread-badge')`, 'cleared')
+check((await evaluate('document.title')) === 'Thread Buddies', 'the unread count and the title clear')
+
+console.log('45. Online status')
+await waitFor(`${homeRow}?.querySelector('.online-dot')`, 'ana online', 5000)
+check(true, 'ana shows as online on ben’s home (a green dot)')
+await anaBrowser.go('about:blank')
+await waitFor(`${homeRow} && !${homeRow}.querySelector('.online-dot')`, 'ana offline', 10000)
+check(true, 'when ana closes the app, the dot goes')
+await anaBrowser.go(APP + chatPath)
+await waitFor(`${homeRow}?.querySelector('.online-dot')`, 'ana back', 10000)
+check(true, 'and comes back when she opens it again')
+
+console.log('46. Read only, live')
+await go(APP + chatPath)
+await waitFor(`${isLive} && document.querySelector('.chat-composer')`, 'ben chat for unfriend')
+check((await text()).includes('Online'), 'the chat header says ana is online')
+await anaBrowser.go(`${APP}/u/${benName}`)
+await anaBrowser.click('Unfriend')
+await anaBrowser.waitFor(`document.querySelector('.confirm-box')`, 'confirm')
+await anaBrowser.click('Unfriend @')
+await anaBrowser.waitFor(`document.body.innerText.includes('View messages')`, 'unfriended')
+await waitFor(`!document.querySelector('.chat-composer') && document.body.innerText.includes("aren't friends any more")`, 'read only live', 5000)
+check(true, 'when ana unfriends him, ben’s open chat turns read-only without a reload')
+await waitFor(`!document.body.innerText.includes('Online')`, 'online hidden', 5000)
+check(true, 'and a former friend’s online status is no longer shown')
+await shot('38-chat-read-only-live')
+
+console.log('47. Mobile')
+await anaBrowser.click('Add friend')
+await anaBrowser.waitFor(`document.body.innerText.includes('Request sent')`, 'ana asks again')
+await go(APP + '/requests')
+await waitFor(`document.querySelector('.person-list')?.innerText.includes('Ana Edited')`, 'request for mobile')
+await click('Accept')
+await waitFor(`document.querySelector('.relation-label.is-friends')`, 'friends for mobile')
+await anaBrowser.go(APP + chatPath)
+await anaBrowser.waitFor(isLive, 'ana live for mobile')
+await anaBrowser.say('One more for the badge')
+await viewport(390, 844, true)
+await go(APP + '/')
+await waitFor(`${homeRow}?.querySelector('.unread-badge') && ${homeRow}?.querySelector('.online-dot')`, 'mobile home', 8000)
+await shot('39-home-mobile-unread-online')
+check(!(await evaluate('document.documentElement.scrollWidth > window.innerWidth')), 'home with unread and online has no horizontal scroll at 390px')
 await anaBrowser.close()
 
 ws.close()

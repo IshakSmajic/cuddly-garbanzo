@@ -1,7 +1,7 @@
 # Thread Buddies — progress and handoff
 
-Last updated: 16 October 2026, after milestone 7 (built and checked on
-`milestone-7-realtime`; not yet committed).
+Last updated: 16 October 2026, after milestone 8 (built and checked on
+`milestone-8-chat-ux`; not yet committed).
 
 This file is the running record of the project: what is done, what is live,
 what was decided, and what comes next. Read it at the start of a session and
@@ -20,9 +20,9 @@ are in `CLAUDE.md`.
 | 4 | User discovery and requests: search, send/cancel/accept/decline, blocking (+ the `friendships` table) | Done (commit `109b360`, message typo "Fruend") |
 | 5 | Friendships: friend list, unfriend, accept creates the conversation | Done (commit `ce0e4c6`) |
 | 6 | Direct messaging persistence: history, friends-only sending, paging | Done (commit `f4c09ce`) |
-| 7 | Realtime messaging: live delivery, reconnect recovery, dedupe | Built on `milestone-7-realtime`, all checks pass; awaiting commit |
-| 8 | Chat UX: typing, presence, unread counts, read receipts | **Next.** Plan outline below |
-| 9 | Media: image messages | Not started |
+| 7 | Realtime messaging: live delivery, reconnect recovery, dedupe | Done (commit `ea728e0`) |
+| 8 | Chat UX: typing, presence, unread counts, read receipts | Built on `milestone-8-chat-ux`, all checks pass; awaiting commit |
+| 9 | Media: image messages | **Next.** Plan outline below |
 | 10 | Release: deploy (Vercel + Gmail SMTP), security review, mobile polish | Not started |
 
 Milestones 1–7 make the app usable by friends; 8–10 improve it.
@@ -66,7 +66,7 @@ Milestones 1–7 make the app usable by friends; 8–10 improve it.
 
 ### Local Supabase (Docker, 12 containers)
 
-- All nine migrations applied (through `realtime`). Auth settings in `supabase/config.toml`:
+- All ten migrations applied (through `chat_ux`). Auth settings in `supabase/config.toml`:
   email confirmation on, minimum password 8, site URL `http://localhost:5173`,
   redirect allow-list (exact URLs) `http://localhost:5173`,
   `http://localhost:5173/reset-password` and the same two on `127.0.0.1`,
@@ -80,7 +80,7 @@ Milestones 1–7 make the app usable by friends; 8–10 improve it.
 
 - Linked to the repo. Has migrations 1 and 2 only, so the public schema is
   **empty**. The demo tables and the demo accounts (alice/bob) are deleted.
-- **Not yet applied:** the profiles, avatars, avatar-fixes, friend-requests, conversations, messages and realtime migrations, the auth settings (site URL,
+- **Not yet applied:** the profiles, avatars, avatar-fixes, friend-requests, conversations, messages, realtime and chat-ux migrations, the auth settings (site URL,
   redirect URLs including `/reset-password`, confirm email, password length,
   secure password change, password-changed notification). Custom SMTP
   (Gmail) **is** configured (open item 2).
@@ -458,12 +458,73 @@ Behaviour worth knowing:
   ids are taken at insert, rows appear at commit.
 - Own messages arrive twice (insert answer + event); merged by id, and the
   event also clears the pending bubble. So a lost answer now heals itself.
-- Becoming read-only after an unfriend is not live (unpublishable table);
-  it shows on the next send or on resume.
+- Becoming read-only after an unfriend was not live in milestone 7; milestone
+  8 announces friendship changes on a private channel instead.
 - e2e: 132 checks. A second isolated browser (`Target.createBrowserContext`)
   plays Ana. A WebSocket wrapper injected before the app loads can swallow
   frames containing `window.__muteLive` (a missed event) and records sockets
   in `window.__sockets`.
+
+### Milestone 8: unread counts, read receipts, typing, online status
+
+**Database** (`supabase/migrations/20261016093340_chat_ux.sql`):
+
+- `conversation_members.last_read_message_id` → FK to `messages` (set null).
+  `mark_read(conversation, message)`: security definer; checks membership
+  *first* (an outsider learns nothing about which messages exist), locks
+  your row, moves the position only forward in (created_at, id), then
+  `realtime.send(…, 'read', 'conversation:<id>', true)` from the database.
+- `my_conversations` gains `unread_count` (others' messages after your
+  position; dropped and recreated since the return type changed).
+- **Private channels:** policies on `realtime.messages` (RLS was on with no
+  policies, so all private channels were closed):
+  `conversation:<id>`: members listen (broadcast); members who are still
+  friends send (`private.can_send_in`). `user:<id>`: that user and current
+  friends see presence; only that user announces. `private.topic_id(kind)`
+  parses the channel name (malformed → null → refused). `authenticated`
+  may execute `topic_id`, `can_send_in`, `are_friends` (policies run as the
+  subscriber).
+- Trigger `friendships_announce` (insert/delete on `friendships`) sends a
+  `relationship` event on the pair's conversation channel: open chats turn
+  read-only or writable live (fixes milestone 7's limitation).
+- Tests: `chat_ux.test.sql` (29 checks; channel policies tested the way
+  Realtime does: as the user, read/insert rows on the topic).
+  `npm run db:realtime` now also covers private channels against the running
+  service.
+
+**Findings worth remembering:**
+
+- Members may broadcast on their conversation (typing), so a member *can*
+  send a fake `read` event. The app treats `read` events only as a cue and
+  re-reads positions from `conversation_members` (only `mark_read` writes
+  them), so a fake changes nothing on screen.
+- Realtime checks channel policies **on join and on token refresh**. An
+  already-joined former friend keeps receiving presence until they rejoin or
+  their token refreshes (≤ 1 h). The app leaves a former friend's channel
+  when its chat list reloads; a modified client could watch online status
+  (not messages) for up to an hour. Accepted.
+- realtime-js returns the existing channel for a name that is still leaving;
+  `joinPrivate` shares one channel per name with a delayed removal, so React
+  StrictMode remounts work.
+- Typing throttle (3 s) is reset when you send; otherwise typing right after
+  sending showed nothing (found by a flaky e2e run).
+
+**Frontend:**
+
+| File | Role |
+|---|---|
+| `src/app/AppShell.tsx`, `chats.ts` | Layout route for all signed-in pages: one live chat list (with unread counts), own presence on `user:<me>`, friends' presence, tab title "(n) Thread Buddies"; `useChats()` |
+| `src/app/chatList.ts` | `withMessage` (preview, unread, order) (+ tests) |
+| `src/lib/realtime.ts` | `joinPrivate()` for Broadcast/Presence channels |
+| `src/lib/messages.ts` | `markRead`, `otherReadPosition` |
+| `src/lib/messageRules.ts` | `isReadAt`, `seenMessageId` (+ tests) |
+| `src/pages/Chat.tsx` | Typing (send ≤ every 3 s, show 5 s), mark read when visible and at the bottom, "Seen", online in the header, live read-only |
+| `src/pages/Home.tsx` | Uses `useChats()`; unread badge, online dot |
+| `src/pages/Requests.tsx` | A live INSERT for a request already shown no longer reloads (it dropped a just-accepted row) |
+
+- e2e: 150 checks, passed three runs in a row. `click()` and `type()` wait
+  for their element. Both browsers use `Emulation.setFocusEmulationEnabled`
+  so they count as visible.
 
 ## Decisions
 
@@ -497,7 +558,11 @@ Also decided (milestone 6): Home is the chat list, including read-only
 conversations; no message rate limit for now.
 
 Also decided (milestone 7): Supabase Realtime `postgres_changes`; publish
-only `messages` and `friend_requests`; read-only state is not live.
+only `messages` and `friend_requests`.
+
+Also decided (milestone 8): read receipts always on (no setting); online
+status for current friends only, no "last seen"; friendship changes
+announced live on the conversation channel.
 
 Recommendations not yet explicitly confirmed (fine to follow, but mention them
 when they come up): no request expiry.
@@ -547,7 +612,7 @@ by Claude to match it.
      should be able to sign in).
    Spec sections 2, 4 and 9 updated (spec v2.3).
 4. **Hosted project setup** (at deployment): push the pending migrations
-   (profiles, avatars, avatar fixes, friend requests, conversations, messages, realtime), apply the auth settings. SMTP is done. Ask first.
+   (profiles, avatars, avatar fixes, friend requests, conversations, messages, realtime, chat ux), apply the auth settings. SMTP is done. Ask first.
 5. Bundle is ~261 kB (83 kB gzipped). Fine for now; code-split later.
 6. Accessibility note, left as designed: white text on `#f55252` is about
    3.2:1 contrast, below 4.5:1. Near-black text on the red would pass.
@@ -563,27 +628,29 @@ by Claude to match it.
 
 ## Next phase
 
-### Milestone 8: chat UX (spec section 8, "later features")
+### Milestone 9: image messages (spec sections 2, 5 and 7)
 
 Plan outline to present for approval:
 
-- **Unread counts and read receipts:** `conversation_members.last_read_message_id`
-  (reserved since milestone 5) gets its FK to `messages`; a
-  `mark_read(conversation, message_id)` function (only forward, only your
-  own row); unread count per chat in `my_conversations`; "Seen" under your
-  last message. Members' read positions are already readable by members.
-  Live updates of the other person's read position would need
-  `conversation_members` published, which we refused (deletes leak keys):
-  consider Broadcast for receipts instead.
-- **Typing indicator and presence:** Realtime Broadcast and Presence, which
-  do **not** go through table RLS; they need private channels and policies
-  on `realtime.messages` (topic per conversation, members only). Explain the
-  difference from postgres_changes.
-- **Decide:** whether read receipts are shown (privacy preference?), and
-  whether online status is visible to all friends.
-- **Tests:** pgTAP for `mark_read` (only forward, only members, only own
-  row) and the `realtime.messages` policies; e2e with two browsers for
-  typing, presence, unread badges and "Seen".
+- **Storage:** a **private** `message-images` bucket (unlike avatars), size
+  and type limits; files under `{conversation_id}/{uuid}.{ext}`. Read policy:
+  conversation members (`is_conversation_member` on the first folder). Upload
+  policy: members who can send (`can_send_in`). Viewing through signed URLs
+  (short expiry), not public URLs.
+- **Table** `message_attachments` as in spec section 5 (storage_path UNIQUE,
+  mime allow-list, size > 0 and under the limit). Messages may then have no
+  text: "text or at least one attachment" spans two tables, so a security
+  definer `send_image_message(conversation, client_id, path, caption)`
+  inserts both in one transaction and checks the upload exists and belongs
+  to the caller (like `set_avatar`).
+- **Client:** pick or paste an image, re-encode (strip EXIF/GPS, reuse
+  `image.ts` ideas, bigger max size), upload, then call the function; pending
+  bubble with progress; signed URLs refreshed when expired; a lightbox.
+- **Deletion:** account deletion keeps images for the other person (like
+  messages); deleting the conversation (both accounts gone) must delete the
+  files, which SQL can't do: needs the cleanup Edge Function (open item 7).
+- **Tests:** pgTAP for policies and the function; e2e upload/view, outsider
+  can't fetch, EXIF stripped.
 
 ## Tooling and gotchas
 
