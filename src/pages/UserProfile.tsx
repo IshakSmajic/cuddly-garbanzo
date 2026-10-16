@@ -3,12 +3,13 @@ import { Link, useParams } from 'react-router'
 import { useAuth } from '../auth/context.ts'
 import { AppHeader } from '../components/AppHeader.tsx'
 import { Avatar } from '../components/Avatar.tsx'
-import { Button } from '../components/Button.tsx'
+import { ConfirmAction } from '../components/ConfirmAction.tsx'
 import { RelationActions } from '../components/RelationActions.tsx'
 import {
   blockUser,
   notifyFriendsChanged,
   relationshipWith,
+  unfriend,
   type Person,
   type RelationState,
 } from '../lib/friends.ts'
@@ -90,6 +91,14 @@ type ViewProps = {
 }
 
 function ProfileView({ person, relation, isSelf, onRelation }: ViewProps) {
+  // Both change the relation on the server, then show the new one.
+  const then = (action: (id: string) => Promise<void>) => async () => {
+    await action(person.user_id)
+    onRelation(await relationshipWith(person.user_id))
+    notifyFriendsChanged()
+  }
+  const name = <span className="text-strong">@{person.username}</span>
+
   return (
     <>
       <div className="profile-head">
@@ -114,68 +123,41 @@ function ProfileView({ person, relation, isSelf, onRelation }: ViewProps) {
               initial={relation}
               onChange={onRelation}
             />
-            {relation.relation !== 'blocked' && (
-              <BlockControl userId={person.user_id} username={person.username} onBlocked={onRelation} />
-            )}
+            <div className="quiet-actions">
+              {relation.relation === 'friends' && (
+                <ConfirmAction
+                  label="Unfriend"
+                  explanation={
+                    <>
+                      Unfriend {name}? You'll both keep your messages, but neither of you can send new ones until
+                      you're friends again.
+                    </>
+                  }
+                  confirmLabel={`Unfriend @${person.username}`}
+                  busyLabel="Unfriending…"
+                  cancelLabel="Stay friends"
+                  action={then(unfriend)}
+                />
+              )}
+              {relation.relation !== 'blocked' && (
+                <ConfirmAction
+                  label="Block"
+                  explanation={
+                    <>
+                      Block {name}? This ends your friendship and any pending request. They won't find you in search
+                      or be able to send you requests. Your messages stay. You can unblock later.
+                    </>
+                  }
+                  confirmLabel={`Block @${person.username}`}
+                  busyLabel="Blocking…"
+                  cancelLabel="Don't block"
+                  action={then(blockUser)}
+                />
+              )}
+            </div>
           </>
         )}
       </div>
     </>
-  )
-}
-
-function BlockControl({
-  userId,
-  username,
-  onBlocked,
-}: {
-  userId: string
-  username: string | null
-  onBlocked: (next: RelationState) => void
-}) {
-  const [confirming, setConfirming] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  async function block() {
-    setBusy(true)
-    setError(null)
-    try {
-      await blockUser(userId)
-      onBlocked(await relationshipWith(userId))
-      notifyFriendsChanged()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Something went wrong. Please try again.')
-      setBusy(false)
-    }
-  }
-
-  if (!confirming) {
-    return (
-      <button type="button" className="link-button block-link" onClick={() => setConfirming(true)}>
-        Block
-      </button>
-    )
-  }
-  return (
-    <div className="block-confirm" role="group" aria-label="Confirm block">
-      <p>
-        Block <span className="text-strong">@{username}</span>? This ends your friendship and any pending
-        request. They won't find you in search or be able to send you requests. You can unblock later.
-      </p>
-      <div className="relation-actions">
-        <Button className="button-compact" disabled={busy} onClick={() => void block()}>
-          {busy ? 'Blocking…' : `Block @${username}`}
-        </Button>
-        <Button variant="secondary" className="button-compact" disabled={busy} onClick={() => setConfirming(false)}>
-          Don't block
-        </Button>
-      </div>
-      {error && (
-        <p className="relation-error" role="alert">
-          {error}
-        </p>
-      )}
-    </div>
   )
 }

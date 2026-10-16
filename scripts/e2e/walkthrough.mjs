@@ -539,7 +539,7 @@ await go(`${APP}/u/${ana.username}`)
 await waitFor(has('Friends'), 'ana profile')
 check((await text()).includes('Hello there'), "the profile page shows ana's bio")
 await click('Block')
-await waitFor(`document.querySelector('.block-confirm')`, 'confirm')
+await waitFor(`document.querySelector('.confirm-box')`, 'confirm')
 check(true, 'blocking asks for confirmation first')
 await shot('22-block-confirm')
 await click('Block @')
@@ -610,6 +610,74 @@ await go(`${APP}/u/${ana.username}`)
 await waitFor(has('Block'), 'mobile profile')
 await shot('25-profile-page-mobile')
 check(!(await evaluate('document.documentElement.scrollWidth > window.innerWidth')), 'profile page has no horizontal scroll at 390px')
+
+// Rows the signed-in user can read through the API with their own session
+// (so this goes through RLS, like the app).
+async function rest(query) {
+  const session = JSON.parse(
+    await evaluate(`localStorage.getItem(Object.keys(localStorage).find(k => /^sb-.*-auth-token$/.test(k)))`),
+  )
+  const res = await fetch(`${env.VITE_SUPABASE_URL}/rest/v1/${query}`, {
+    headers: { apikey: env.VITE_SUPABASE_PUBLISHABLE_KEY, authorization: `Bearer ${session.access_token}` },
+  })
+  return res.json()
+}
+// Ana asks, Ben accepts. (Ben can't ask: Ana declined him within 24 hours.)
+async function makeFriends() {
+  await signOut()
+  await signIn(ana.email, newPassword)
+  await go(`${APP}/u/${benName}`)
+  await click('Add friend')
+  await waitFor(has('Request sent'), 'ana asks ben')
+  await signOut()
+  await signIn(benUser.email, benUser.password)
+  await click('Requests')
+  await waitFor(`location.pathname === '/requests' && document.querySelector('.person-list')`, 'ben requests')
+  await click('Accept')
+  await waitFor(`document.querySelector('.relation-label.is-friends')`, 'ben accepts')
+}
+
+console.log('26. Friends on the home screen')
+await viewport(1680, 900)
+await go(APP + '/')
+await waitFor(has('No friends yet.'), 'empty friends')
+check(true, 'with no friends, home points to people search')
+await makeFriends()
+await go(APP + '/')
+await waitFor(`document.querySelector('.person-list')`, 'friend list')
+check((await results()).includes('Ana Edited') && (await results()).includes('Since'), 'after accepting, ana is on ben’s friend list')
+await shot('26-home-friends')
+const conversations = await rest('conversations?select=id')
+check(conversations.length === 1, 'accepting created one conversation, visible to ben')
+const members = await rest(`conversation_members?select=user_id&conversation_id=eq.${conversations[0]?.id}`)
+check(members.length === 2, 'ben can see both members of it')
+
+console.log('27. Unfriend')
+await go(`${APP}/u/${ana.username}`)
+await click('Unfriend')
+await waitFor(`document.querySelector('.confirm-box')`, 'unfriend confirm')
+check((await text()).includes("You'll both keep your messages"), 'unfriending asks first and says messages stay')
+await shot('27-unfriend-confirm')
+await click('Unfriend @')
+await waitFor(has('Add friend'), 'unfriended')
+check(!(await text()).includes('Friends'), 'after unfriending, the profile offers Add friend')
+await go(APP + '/')
+await waitFor(has('No friends yet.'), 'list empty again')
+check(true, 'ana leaves ben’s friend list')
+const afterUnfriend = await rest('conversations?select=id')
+check(afterUnfriend.length === 1 && afterUnfriend[0].id === conversations[0].id, 'the conversation survives unfriending')
+
+console.log('28. Friends again')
+await makeFriends()
+const again = await rest('conversations?select=id')
+check(again.length === 1 && again[0].id === conversations[0].id, 're-friending reuses the same conversation')
+
+console.log('29. Home on mobile')
+await viewport(390, 844, true)
+await go(APP + '/')
+await waitFor(`document.querySelector('.person-list')`, 'mobile friend list')
+await shot('28-home-mobile')
+check(!(await evaluate('document.documentElement.scrollWidth > window.innerWidth')), 'home has no horizontal scroll at 390px')
 
 ws.close()
 console.log(process.exitCode ? 'Some checks FAILED' : 'All checks passed')

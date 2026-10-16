@@ -1,7 +1,7 @@
 # Thread Buddies — progress and handoff
 
-Last updated: 16 October 2026, after milestone 4 (built and checked on
-`milestone-4-friend-requests`; not yet committed).
+Last updated: 16 October 2026, after milestone 5 (built and checked on
+`milestone-5-friendships`; not yet committed).
 
 This file is the running record of the project: what is done, what is live,
 what was decided, and what comes next. Read it at the start of a session and
@@ -17,9 +17,9 @@ are in `CLAUDE.md`.
 | 2 | Auth: sign up, confirm email, sign in, onboarding, protected routes | Done (commit `c2409e4`) |
 | 2b | Password reset (follow-up to milestone 2) | Done (commit "Milestone 2b: password reset") |
 | 3 | Profiles and avatars: profile editor, avatar upload/replace/remove, rename to Thread Buddies | Done (commits "Profile picture functionality and upload", "Avatar delete guard and error code fix") |
-| 4 | User discovery and requests: search, send/cancel/accept/decline, blocking (+ the `friendships` table) | Built on `milestone-4-friend-requests`, all checks pass; awaiting commit |
-| 5 | Friendships: friend list, unfriend, accept creates the conversation | **Next.** Plan outline below |
-| 6 | Direct messaging persistence: history, friends-only sending, paging | Not started |
+| 4 | User discovery and requests: search, send/cancel/accept/decline, blocking (+ the `friendships` table) | Done (commit `109b360`, message typo "Fruend") |
+| 5 | Friendships: friend list, unfriend, accept creates the conversation | Built on `milestone-5-friendships`, all checks pass; awaiting commit |
+| 6 | Direct messaging persistence: history, friends-only sending, paging | **Next.** Plan outline below |
 | 7 | Realtime messaging: live delivery, reconnect recovery, dedupe | Not started |
 | 8 | Chat UX: typing, presence, unread counts, read receipts | Not started |
 | 9 | Media: image messages | Not started |
@@ -66,7 +66,7 @@ Milestones 1–7 make the app usable by friends; 8–10 improve it.
 
 ### Local Supabase (Docker, 12 containers)
 
-- All six migrations applied (through `friend_requests`). Auth settings in `supabase/config.toml`:
+- All seven migrations applied (through `conversations`). Auth settings in `supabase/config.toml`:
   email confirmation on, minimum password 8, site URL `http://localhost:5173`,
   redirect allow-list (exact URLs) `http://localhost:5173`,
   `http://localhost:5173/reset-password` and the same two on `127.0.0.1`,
@@ -80,7 +80,7 @@ Milestones 1–7 make the app usable by friends; 8–10 improve it.
 
 - Linked to the repo. Has migrations 1 and 2 only, so the public schema is
   **empty**. The demo tables and the demo accounts (alice/bob) are deleted.
-- **Not yet applied:** the profiles, avatars, avatar-fixes and friend-requests migrations, the auth settings (site URL,
+- **Not yet applied:** the profiles, avatars, avatar-fixes, friend-requests and conversations migrations, the auth settings (site URL,
   redirect URLs including `/reset-password`, confirm email, password length,
   secure password change, password-changed notification). Custom SMTP
   (Gmail) **is** configured (open item 2).
@@ -322,6 +322,55 @@ Behaviour worth knowing:
   (decision below); it shows "Add friend", and sending gives a vague error.
 - e2e: 75 checks (new sections 19–25, two users in one browser).
 
+### Milestone 5: friendships and the direct conversation
+
+**Database** (`supabase/migrations/20261016070423_conversations.sql`):
+
+- `conversations` (id, created_at), `direct_conversations` (pair, lower id
+  first, UNIQUE), `conversation_members` (`last_read_message_id` reserved for
+  milestone 8, no FK yet). Clients: select only.
+- **Reading:** all three use `private.is_conversation_member(id)` (security
+  definer) in their policy. A members policy that queried
+  `conversation_members` directly would recurse forever. `authenticated` has
+  `usage` on `private` and execute on this one function only; default
+  privileges now revoke execute from PUBLIC for any new function in
+  `private`, so new helpers start locked.
+- **Accept creates the conversation:** `private.make_friends` (called only
+  under the pair lock) inserts the friendship, looks up the pair's
+  conversation, creates conversation + mapping if none, and inserts both
+  memberships `on conflict do nothing`. Re-friending reuses everything. The
+  migration backfills conversations for existing friendships (checked by
+  applying it to a database that had one).
+- `unfriend(other)`: deletes the friendship row only, under the pair lock;
+  twice is harmless. Unfriend and block both leave conversation and
+  memberships in place.
+- **Account deletion:** the deleted side of `direct_conversations` becomes
+  null (the row stays, so the conversation is still direct → "Deleted user");
+  their membership row cascades. A trigger
+  (`private.delete_empty_conversation`, security definer) deletes a
+  conversation when its last member goes, so nothing unreadable stays behind.
+  Checked through the real Auth admin API, not only as the table owner.
+- **Concurrency finding:** with the pair lock disabled, two simultaneous
+  `make_friends` still made one conversation: the second session's insert
+  into `friendships` waits on the first's uncommitted row (same primary key)
+  and then sees its conversation. The UNIQUE pair is a third layer.
+- Tests: `conversations.test.sql` (36 checks); `race.sh` now also counts the
+  pair's conversation and memberships.
+
+**Frontend:**
+
+| File | Role |
+|---|---|
+| `src/pages/Home.tsx` | Friend list (sorted by name, "Since" date), or a pointer to People |
+| `src/components/ConfirmAction.tsx` | Quiet link → confirmation box; used for Unfriend and Block |
+| `src/pages/UserProfile.tsx` | Unfriend (when friends) and Block, both confirmed |
+| `src/lib/friends.ts` | `friendsList`, `unfriend` |
+
+- "Since" is the current friendship's start: re-friending resets it.
+- e2e: 85 checks (new sections 26–29: friend list, unfriend keeps the
+  conversation, re-friending reuses it, checked through the API with the
+  user's own session).
+
 ## Decisions
 
 Accepted by the developer (spec section 11):
@@ -345,6 +394,10 @@ search is a username prefix, 3+ characters, 20 results, 30/minute; 20
 requests/hour, 24 h before re-asking after a decline; a block hides the
 blocker from search but not from a direct profile read; people you blocked
 stay in your search, marked blocked.
+
+Also decided (milestone 5, 16 Oct 2026): friend list on Home; deleting an
+account nulls that side of `direct_conversations` and removes their
+membership; a conversation with no members left is deleted.
 
 Recommendations not yet explicitly confirmed (fine to follow, but mention them
 when they come up): Supabase Realtime before a custom WebSocket server; no
@@ -395,7 +448,7 @@ by Claude to match it.
      should be able to sign in).
    Spec sections 2, 4 and 9 updated (spec v2.3).
 4. **Hosted project setup** (at deployment): push the pending migrations
-   (profiles, avatars, avatar fixes, friend requests), apply the auth settings. SMTP is done. Ask first.
+   (profiles, avatars, avatar fixes, friend requests, conversations), apply the auth settings. SMTP is done. Ask first.
 5. Bundle is ~261 kB (83 kB gzipped). Fine for now; code-split later.
 6. Accessibility note, left as designed: white text on `#f55252` is about
    3.2:1 contrast, below 4.5:1. Near-black text on the red would pass.
@@ -411,26 +464,33 @@ by Claude to match it.
 
 ## Next phase
 
-### Milestone 5: friendships and the direct conversation (spec sections 3 and 5)
+### Milestone 6: direct messaging persistence (spec sections 3, 5 and 8)
 
 Plan outline to present for approval:
 
-- **Tables** from spec section 5: `conversations`, `direct_conversations`
-  (UNIQUE sorted pair), `conversation_members`. Clients read only their own
-  (RLS via membership); no client writes.
-- **Accept creates the conversation:** extend `private.make_friends` to
-  create the conversation, the pair mapping and both memberships with
-  `INSERT … ON CONFLICT DO NOTHING`, still under the pair lock. Re-friending
-  reuses the existing conversation. Backfill conversations for friendships
-  made in milestone 4 (the migration can do it).
-- **`unfriend(other)`:** deletes the friendship row only; conversation and
-  memberships stay (history readable, sending stops in milestone 6).
-- **UI:** friend list on the home screen (replaces the placeholder), unfriend
-  from the profile page with confirmation.
-- **Tests:** pgTAP for unfriend permissions, one conversation per pair under
-  re-friending, memberships surviving unfriend and block; extend
-  `race.sh` with two accepts creating one conversation; e2e for the list and
-  unfriend.
+- **Table** `messages` as in spec section 5: bigint identity id,
+  `conversation_id`, `sender_id`, `client_id` (UUID made by the client),
+  `content` 1–4,000 chars, `created_at`; UNIQUE (sender_id, client_id) for
+  idempotent retries; index (conversation_id, created_at desc, id desc).
+- **Delete rules to settle:** spec says `sender_id ON DELETE SET NULL`
+  ("Deleted user") with a composite FK (conversation_id, sender_id) →
+  conversation_members. Membership cascades on account deletion, so the
+  composite FK needs `ON DELETE SET NULL (sender_id)` (Postgres 15+; the
+  stack runs 17). Messages cascade from conversations (empty-conversation
+  trigger).
+- **Write path:** clients insert directly under RLS (spec): sender is you,
+  you're a member, and a `friendships` row exists for the pair in
+  `direct_conversations`. Column grants: insert only (conversation_id,
+  client_id, content); no update/delete for now (editing/deleting messages
+  is not in scope; confirm).
+- **Reading:** members only (`is_conversation_member`); keyset pagination
+  (`created_at, id` < cursor), 50 per page.
+- **UI:** a conversation screen opened from the friend list (`/c/:id` or
+  `/chat/:username`), history with "load older", composer with retry using
+  the same client_id, read-only banner after unfriend/block.
+- **Tests:** pgTAP for sending as non-friend/non-member/someone else,
+  idempotent retry, length limits, pagination order, history after unfriend
+  and account deletion; e2e for send, reload, older pages, former friends.
 
 ## Tooling and gotchas
 

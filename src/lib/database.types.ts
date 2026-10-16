@@ -57,6 +57,100 @@ export type Database = {
           },
         ];
       };
+      conversation_members: {
+        Row: {
+          conversation_id: string;
+          joined_at: string;
+          last_read_message_id: number | null;
+          user_id: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          conversation_id: string;
+          joined_at?: string;
+          last_read_message_id?: number | null;
+          user_id: string;
+        };
+        Update: {
+          conversation_id?: string;
+          joined_at?: string;
+          last_read_message_id?: number | null;
+          user_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "conversation_members_conversation_id_fkey";
+            columns: ["conversation_id"];
+            isOneToOne: false;
+            referencedRelation: "conversations";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "conversation_members_user_id_fkey";
+            columns: ["user_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["user_id"];
+          },
+        ];
+      };
+      conversations: {
+        Row: {
+          created_at: string;
+          id: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          created_at?: string;
+          id?: string;
+        };
+        Update: {
+          created_at?: string;
+          id?: string;
+        };
+        Relationships: [];
+      };
+      direct_conversations: {
+        Row: {
+          conversation_id: string;
+          user_high_id: string | null;
+          user_low_id: string | null;
+        };
+        ComputedFields: never;
+        Insert: {
+          conversation_id: string;
+          user_high_id?: string | null;
+          user_low_id?: string | null;
+        };
+        Update: {
+          conversation_id?: string;
+          user_high_id?: string | null;
+          user_low_id?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "direct_conversations_conversation_id_fkey";
+            columns: ["conversation_id"];
+            isOneToOne: true;
+            referencedRelation: "conversations";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "direct_conversations_user_high_id_fkey";
+            columns: ["user_high_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["user_id"];
+          },
+          {
+            foreignKeyName: "direct_conversations_user_low_id_fkey";
+            columns: ["user_low_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["user_id"];
+          },
+        ];
+      };
       friend_requests: {
         Row: {
           created_at: string;
@@ -219,6 +313,7 @@ export type Database = {
       send_friend_request: { Args: { recipient: string }; Returns: string };
       set_avatar: { Args: { new_path: string }; Returns: string };
       unblock_user: { Args: { target: string }; Returns: undefined };
+      unfriend: { Args: { other: string }; Returns: undefined };
     };
     Enums: {
       [_ in never]: never;

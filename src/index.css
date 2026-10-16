@@ -477,13 +477,6 @@ textarea.field-input {
   text-decoration: underline;
 }
 
-.home-empty {
-  flex: 1;
-  display: grid;
-  place-content: center;
-  padding: 16px;
-  text-align: center;
-}
 
 /* Settings -------------------------------------------------------------------- */
 .settings {
@@ -735,12 +728,18 @@ textarea.field-input {
   text-align: left;
 }
 
-.block-link {
+.quiet-link {
   color: var(--grey-2);
   font-size: 14px;
 }
 
-.block-confirm {
+.quiet-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+}
+
+.confirm-box {
   display: grid;
   gap: 14px;
   padding: 16px;
@@ -750,7 +749,7 @@ textarea.field-input {
   font-size: 14px;
 }
 
-.block-confirm .relation-actions {
+.confirm-box .relation-actions {
   justify-content: flex-start;
 }
 

@@ -32,7 +32,7 @@ def brk(): C.append(('break', None))
 
 # ---------------------------------------------------------------- content
 title('Chat App — Project Specification for Claude')
-p('**Status:** Revised draft v2.5, 16 October 2026. Milestones 1, 2, 2b and 3 are complete and milestone 4 is built; see docs/PROGRESS.md in the repository for detailed progress.')
+p('**Status:** Revised draft v2.6, 16 October 2026. Milestones 1–4 are complete and milestone 5 is built; see docs/PROGRESS.md in the repository for detailed progress.')
 p('**Purpose:** Build a real-time, friends-only chat application while learning WebSockets, relational database design, authentication, and secure application architecture.')
 
 h1('1. Project goals')
@@ -101,9 +101,9 @@ table([2200, 2500, 3940], [
     ['`conversations`', 'id, created_at',
      'PK id. No type column: a conversation is direct exactly when it has a direct_conversations row. Groups get their own table later'],
     ['`direct_conversations`', 'conversation_id, user_low_id, user_high_id',
-     'PK conversation_id; FK → conversations; FKs → profiles; UNIQUE (user_low_id, user_high_id); CHECK user_low_id < user_high_id'],
+     'PK conversation_id; FK → conversations; FKs → profiles ON DELETE SET NULL, so a deleted account leaves the other person a direct conversation with "Deleted user"; UNIQUE (user_low_id, user_high_id); CHECK user_low_id < user_high_id'],
     ['`conversation_members`', 'conversation_id, user_id, joined_at, last_read_message_id',
-     'PK (conversation_id, user_id); FKs → conversations, profiles; last_read_message_id nullable, reserved for unread counts and read receipts'],
+     'PK (conversation_id, user_id); FKs → conversations, profiles (ON DELETE CASCADE); last_read_message_id nullable, reserved for unread counts and read receipts. When the last member is removed, a trigger deletes the conversation'],
     ['`messages`', 'id, conversation_id, sender_id, client_id, content, created_at',
      'PK id (bigint identity); FK → conversations; composite FK (conversation_id, sender_id) → conversation_members; UNIQUE (sender_id, client_id); content nullable, 1–4,000 chars when present; INDEX (conversation_id, created_at DESC, id DESC)'],
     ['`message_attachments`', 'id, message_id, storage_path, mime_type, size_bytes, created_at',
@@ -111,7 +111,7 @@ table([2200, 2500, 3940], [
 ])
 p('These tables are a proposal to be checked against the decisions in section 11, not a proven BCNF schema. Every foreign key\'s ON DELETE action follows from the account-deletion decision and must be set before the first migration.')
 p('**Single source of truth for friendship.** Only `friendships` answers "are these two friends now?". `friend_requests` is workflow and history: an accepted request records how a friendship started, not whether it still exists. Keeping the fact in one table means an unfriend cannot leave the two tables disagreeing.')
-p('**One direct conversation per pair.** `direct_conversations` stores each pair once, lower id first, and its UNIQUE (user_low_id, user_high_id) constraint makes a second conversation impossible even under concurrent requests. A uniqueness rule on `conversation_members` alone could not express this. The conversation is created inside the accept transaction: the function takes a transaction-scoped advisory lock on the sorted pair of user ids (a row lock cannot cover a request that does not exist yet, as when both users send at the same moment), re-reads the request, checks that the caller is the recipient and the status is pending, inserts the friendship, creates the conversation, mapping and both membership rows only if the pair has none (relying on the unique constraint via INSERT … ON CONFLICT DO NOTHING rather than a prior SELECT), and marks the request accepted. Re-friending finds the existing conversation.')
+p('**One direct conversation per pair.** `direct_conversations` stores each pair once, lower id first, and its UNIQUE (user_low_id, user_high_id) constraint makes a second conversation impossible even under concurrent requests. A uniqueness rule on `conversation_members` alone could not express this. The conversation is created inside the accept transaction: the function takes a transaction-scoped advisory lock on the sorted pair of user ids (a row lock cannot cover a request that does not exist yet, as when both users send at the same moment), re-reads the request, checks that the caller is the recipient and the status is pending, inserts the friendship, looks up the pair\'s conversation and creates the conversation, mapping and both membership rows only if there is none, and marks the request accepted. Under the pair lock this look-then-insert is safe; the unique constraint is the backstop. (INSERT … ON CONFLICT DO NOTHING on the mapping alone would leave an empty conversation behind, since the conversation row is inserted first.) Re-friending finds the existing conversation.')
 p('**Mapping and membership agree.** Foreign keys cannot guarantee that a direct conversation\'s members are exactly its mapped pair. This holds because clients cannot write either table; only the accept function does.')
 p('**Historical access versus sending.** Reading a conversation requires a membership row, and membership rows are never deleted on unfriend. Sending is checked separately: the INSERT policy on `messages` requires sender_id = auth.uid() and a `friendships` row for the pair recorded in `direct_conversations`. Unfriending deletes one row, which stops sending immediately and leaves history untouched. For future group conversations, revisit this authorization model.')
 p('**Write paths.** Clients never insert, update or delete `friend_requests`, `friendships`, `blocks`, `conversations`, `direct_conversations` or `conversation_members` directly. Those privileges are revoked from the authenticated role, and every change goes through SECURITY DEFINER functions: send_friend_request, respond_to_friend_request, cancel_friend_request, unfriend, block_user and unblock_user. Username search goes through search_users, which applies the limits in section 11 and the block rule. Status transitions (pending → accepted, declined or cancelled, and nothing else) are enforced inside those functions; a CHECK constraint can restrict values but not transitions. Text messages are inserted directly by the client under RLS.')
@@ -165,9 +165,9 @@ n('**Release and mobile preparation:** Vercel deployment and Gmail SMTP setup, s
 p('For each milestone, Claude should present: scope, data model changes, key security risks, tests, acceptance checklist, and explanations of concepts the developer should understand. A milestone\'s tests must pass before the next one starts. Pause for approval before implementing the next milestone.')
 
 h1('10. Current repository state')
-b('Milestones 1 (foundation), 2 (auth, including password reset) and 3 (profiles and avatars) are complete; milestone 4 (search, friend requests and blocking) is built. Detailed progress, open items and next steps live in `docs/PROGRESS.md`; working rules for Claude are in `CLAUDE.md`.')
-b('Frontend: React + TypeScript (strict) with Vite, React Router, Manrope and the #f55252 accent. Screens: sign in (from `design/sign-in.png`), sign up, check email, forgot and reset password, onboarding, profile settings with avatar upload, people search, friend requests, public profiles with blocking, and a home placeholder.')
-b('Database: `profiles` with username rules, column-level update grants, RLS and a sign-up trigger; a public `avatars` bucket with per-user folder policies and the `set_avatar` and `remove_avatar` functions; `friend_requests`, `friendships` and `blocks`, read-only to clients, changed through security-definer functions that serialise each pair with an advisory lock. Tests: pgTAP in `supabase/tests/database`, a two-session race check in `scripts/db/race.sh`, Vitest in `src`.')
+b('Milestones 1 (foundation), 2 (auth, including password reset), 3 (profiles and avatars) and 4 (search, friend requests and blocking) are complete; milestone 5 (friend list, unfriend, conversation on accept) is built. Detailed progress, open items and next steps live in `docs/PROGRESS.md`; working rules for Claude are in `CLAUDE.md`.')
+b('Frontend: React + TypeScript (strict) with Vite, React Router, Manrope and the #f55252 accent. Screens: sign in (from `design/sign-in.png`), sign up, check email, forgot and reset password, onboarding, profile settings with avatar upload, people search, friend requests, public profiles with unfriend and block, and a home screen listing your friends.')
+b('Database: `profiles` with username rules, column-level update grants, RLS and a sign-up trigger; a public `avatars` bucket with per-user folder policies and the `set_avatar` and `remove_avatar` functions; `friend_requests`, `friendships` and `blocks`, read-only to clients, changed through security-definer functions that serialise each pair with an advisory lock; `conversations`, `direct_conversations` and `conversation_members`, readable by members through a security-definer membership check, created when a request is accepted. Tests: pgTAP in `supabase/tests/database`, a two-session race check in `scripts/db/race.sh`, Vitest in `src`.')
 b('A local Supabase stack runs in Docker; `npm run dev` uses it and Mailpit catches its emails. The hosted project has only the first two migrations: the later migrations and the auth settings are applied at deployment. Gmail SMTP is already configured there.')
 
 h1('11. Decisions still open')
@@ -181,6 +181,7 @@ b('**Avatar bucket.** Decision: public bucket (anyone with an image URL can view
 b('**App name.** Decision: Thread Buddies (earlier working name: Thread).')
 b('**Search behaviour.** Decision (milestone 4): prefix match on username, minimum 3 characters, at most 20 results, 30 searches a minute per user.')
 b('**Request limits.** Decision (milestone 4): at most 20 requests an hour per user; after a decline, the same requester may ask that person again after 24 hours.')
+b('**Conversations after account deletion.** Decision (milestone 5): the deleted user\'s side of `direct_conversations` becomes null and their membership goes; the other person keeps the conversation, shown with "Deleted user". When both have deleted their accounts, the conversation is deleted.')
 b('**Blocks and profile reads.** Decision (milestone 4): a block hides the blocker from search, but profiles stay readable by any signed-in user, so the blocked user can still open the blocker\'s profile by its address. Hiding it would also hide the name on kept conversation history.')
 b('**Hosting and email.** Decision: Vercel on a free `*.vercel.app` address, and Gmail SMTP for auth emails; no domain is needed. The expected scale is two to four people.')
 h2('Can wait')
@@ -198,6 +199,7 @@ b('**v2.1, 15 October 2026:** the developer accepted the five schema decisions i
 b('**v2.2, 15 October 2026:** status and section 10 updated after milestone 2.')
 b('**v2.4, 15 October 2026:** status and section 10 updated after milestone 3.')
 b('**v2.5, 16 October 2026:** milestone 4: search and request limits decided, blocked users stay visible to the blocker, pair locking described, section 10 updated.')
+b('**v2.6, 16 October 2026:** milestone 5: delete rules for direct conversations and memberships, look-then-insert under the pair lock, empty conversations deleted, section 10 updated.')
 b('**v2.3, 15 October 2026:** hosting changed from Netlify to Vercel and email from Resend to Gmail SMTP; no custom domain needed. App named Thread Buddies; public avatar bucket decided.')
 b('**v1:** initial specification.')
 

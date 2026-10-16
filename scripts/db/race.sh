@@ -47,7 +47,11 @@ state() {
   sql -c "select
     (select count(*) from public.friendships where user_low_id = '$A' and user_high_id = '$B'),
     (select count(*) from public.friend_requests where status = 'pending' and '$A' in (requester_id, recipient_id)),
-    (select count(*) from public.blocks where blocker_id = '$A')"
+    (select count(*) from public.blocks where blocker_id = '$A'),
+    (select count(*) from public.direct_conversations where user_low_id = '$A' and user_high_id = '$B'),
+    (select count(*) from public.conversation_members m
+     join public.direct_conversations d using (conversation_id)
+     where d.user_low_id = '$A' and d.user_high_id = '$B')"
 }
 
 hold="select pg_sleep(1) \\g /dev/null"
@@ -60,7 +64,7 @@ second=$(as_user $B "public.send_friend_request('$A')")
 wait
 check "$(cat "$tmp/1")" "pending" "the first send creates a request"
 check "$second" "friends" "the second waits, then finds the request and accepts it"
-check "$(state)" "1|0|0" "one friendship, no pending request left"
+check "$(state)" "1|0|0|1|2" "one friendship and one conversation with both members, no pending request left"
 
 echo "2. B accepts while A blocks B"
 reset_pair
@@ -71,7 +75,7 @@ as_user $B "public.respond_to_friend_request('$req', true)" "$hold" > "$tmp/2" &
 as_user $A "public.block_user('$B')" > /dev/null
 wait
 check "$(cat "$tmp/2")" "accepted" "the accept finishes first"
-check "$(state)" "0|0|1" "the block then removes the new friendship"
+check "$(state)" "0|0|1|1|2" "the block then removes the new friendship; the conversation stays"
 
 echo "3. A blocks B while B accepts"
 reset_pair
@@ -83,7 +87,7 @@ second=$(as_user $B "public.respond_to_friend_request('$req', true)")
 wait
 check "$(echo "$second" | grep -o 'no longer pending' || true)" "no longer pending" \
   "the accept waits, then finds the request cancelled"
-check "$(state)" "0|0|1" "no friendship, the block stays"
+check "$(state)" "0|0|1|0|0" "no friendship and no conversation, the block stays"
 
 sql -c "delete from auth.users where id in ('$A', '$B')"
 rm -rf "$tmp"
