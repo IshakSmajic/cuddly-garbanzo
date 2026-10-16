@@ -23,6 +23,117 @@ export type Database = {
   };
   public: {
     Tables: {
+      blocks: {
+        Row: {
+          blocked_id: string;
+          blocker_id: string;
+          created_at: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          blocked_id: string;
+          blocker_id: string;
+          created_at?: string;
+        };
+        Update: {
+          blocked_id?: string;
+          blocker_id?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "blocks_blocked_id_fkey";
+            columns: ["blocked_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["user_id"];
+          },
+          {
+            foreignKeyName: "blocks_blocker_id_fkey";
+            columns: ["blocker_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["user_id"];
+          },
+        ];
+      };
+      friend_requests: {
+        Row: {
+          created_at: string;
+          id: string;
+          recipient_id: string;
+          requester_id: string;
+          responded_at: string | null;
+          status: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          created_at?: string;
+          id?: string;
+          recipient_id: string;
+          requester_id: string;
+          responded_at?: string | null;
+          status?: string;
+        };
+        Update: {
+          created_at?: string;
+          id?: string;
+          recipient_id?: string;
+          requester_id?: string;
+          responded_at?: string | null;
+          status?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "friend_requests_recipient_id_fkey";
+            columns: ["recipient_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["user_id"];
+          },
+          {
+            foreignKeyName: "friend_requests_requester_id_fkey";
+            columns: ["requester_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["user_id"];
+          },
+        ];
+      };
+      friendships: {
+        Row: {
+          created_at: string;
+          user_high_id: string;
+          user_low_id: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          created_at?: string;
+          user_high_id: string;
+          user_low_id: string;
+        };
+        Update: {
+          created_at?: string;
+          user_high_id?: string;
+          user_low_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "friendships_user_high_id_fkey";
+            columns: ["user_high_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["user_id"];
+          },
+          {
+            foreignKeyName: "friendships_user_low_id_fkey";
+            columns: ["user_low_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["user_id"];
+          },
+        ];
+      };
       profiles: {
         Row: {
           avatar_path: string | null;
@@ -54,13 +165,60 @@ export type Database = {
         };
         Relationships: [];
       };
+      search_events: {
+        Row: {
+          created_at: string;
+          user_id: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          created_at?: string;
+          user_id: string;
+        };
+        Update: {
+          created_at?: string;
+          user_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "search_events_user_id_fkey";
+            columns: ["user_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["user_id"];
+          },
+        ];
+      };
     };
     Views: {
       [_ in never]: never;
     };
     Functions: {
+      block_user: { Args: { target: string }; Returns: undefined };
+      cancel_friend_request: { Args: { request_id: string }; Returns: undefined };
+      relationship_with: {
+        Args: { other: string };
+        Returns: {
+          relation: string;
+          request_id: string;
+        }[];
+      };
       remove_avatar: { Args: Record<PropertyKey, never>; Returns: string };
+      respond_to_friend_request: { Args: { accept: boolean; request_id: string }; Returns: string };
+      search_users: {
+        Args: { query: string };
+        Returns: {
+          avatar_path: string;
+          display_name: string;
+          relation: string;
+          request_id: string;
+          user_id: string;
+          username: string;
+        }[];
+      };
+      send_friend_request: { Args: { recipient: string }; Returns: string };
       set_avatar: { Args: { new_path: string }; Returns: string };
+      unblock_user: { Args: { target: string }; Returns: undefined };
     };
     Enums: {
       [_ in never]: never;

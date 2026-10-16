@@ -1,7 +1,7 @@
 # Thread Buddies — progress and handoff
 
-Last updated: 16 October 2026, after the avatar fixes (follow-up to
-milestone 3, on branch `avatar-fixes`, not yet committed).
+Last updated: 16 October 2026, after milestone 4 (built and checked on
+`milestone-4-friend-requests`; not yet committed).
 
 This file is the running record of the project: what is done, what is live,
 what was decided, and what comes next. Read it at the start of a session and
@@ -16,9 +16,9 @@ are in `CLAUDE.md`.
 | 1 | Foundation: TypeScript, local Supabase, remove demo | Done (commit `14b28b3`) |
 | 2 | Auth: sign up, confirm email, sign in, onboarding, protected routes | Done (commit `c2409e4`) |
 | 2b | Password reset (follow-up to milestone 2) | Done (commit "Milestone 2b: password reset") |
-| 3 | Profiles and avatars: profile editor, avatar upload/replace/remove, rename to Thread Buddies | Done (commit "Profile picture functionality and upload"); fixes on `avatar-fixes` |
-| 4 | User discovery and requests: search, send/cancel/accept/decline, blocking | **Next.** Plan outline below |
-| 5 | Friendships: friend list, unfriend, accept creates the conversation | Not started |
+| 3 | Profiles and avatars: profile editor, avatar upload/replace/remove, rename to Thread Buddies | Done (commits "Profile picture functionality and upload", "Avatar delete guard and error code fix") |
+| 4 | User discovery and requests: search, send/cancel/accept/decline, blocking (+ the `friendships` table) | Built on `milestone-4-friend-requests`, all checks pass; awaiting commit |
+| 5 | Friendships: friend list, unfriend, accept creates the conversation | **Next.** Plan outline below |
 | 6 | Direct messaging persistence: history, friends-only sending, paging | Not started |
 | 7 | Realtime messaging: live delivery, reconnect recovery, dedupe | Not started |
 | 8 | Chat UX: typing, presence, unread counts, read receipts | Not started |
@@ -66,8 +66,7 @@ Milestones 1–7 make the app usable by friends; 8–10 improve it.
 
 ### Local Supabase (Docker, 12 containers)
 
-- All five migrations applied, including the `avatars` storage bucket and the
-  avatar fixes. Auth settings in `supabase/config.toml`:
+- All six migrations applied (through `friend_requests`). Auth settings in `supabase/config.toml`:
   email confirmation on, minimum password 8, site URL `http://localhost:5173`,
   redirect allow-list (exact URLs) `http://localhost:5173`,
   `http://localhost:5173/reset-password` and the same two on `127.0.0.1`,
@@ -81,7 +80,7 @@ Milestones 1–7 make the app usable by friends; 8–10 improve it.
 
 - Linked to the repo. Has migrations 1 and 2 only, so the public schema is
   **empty**. The demo tables and the demo accounts (alice/bob) are deleted.
-- **Not yet applied:** the profiles, avatars and avatar-fixes migrations, the auth settings (site URL,
+- **Not yet applied:** the profiles, avatars, avatar-fixes and friend-requests migrations, the auth settings (site URL,
   redirect URLs including `/reset-password`, confirm email, password length,
   secure password change, password-changed notification). Custom SMTP
   (Gmail) **is** configured (open item 2).
@@ -257,6 +256,72 @@ version was kept; the other one is in a local git stash on the Mac
 ("Mac-side Milestone 3 …") and these two fixes were the only things in it
 worth carrying over.
 
+### Milestone 4: search, friend requests and blocking
+
+**Database** (`supabase/migrations/20261016062930_friend_requests.sql`):
+
+- Tables as in spec section 5: `friend_requests` (history kept; partial
+  unique index on the sorted pair WHERE pending, so one pending request per
+  pair in either direction), `friendships` (lower id first; a row exists only
+  while the friendship is active), `blocks`. Plus `search_events` (rate
+  limit, invisible to clients) and a `text_pattern_ops` index on
+  `profiles.username` for prefix search.
+- Clients: select only, RLS to rows you're part of; `blocks` shows only the
+  blocks *you* made, so nobody can find out who blocked them.
+- Functions (security definer, `search_path = ''`, `authenticated` only):
+  `search_users(query)`, `send_friend_request(recipient)` (accepts theirs if
+  they had already asked; returns `pending` or `friends`),
+  `respond_to_friend_request(request_id, accept)`,
+  `cancel_friend_request(request_id)`, `block_user(target)` (ends the
+  friendship, cancels pending requests), `unblock_user(target)` (friendship
+  does not come back). `relationship_with(other)` is security *invoker*: it
+  reads only what RLS shows, so it can't reveal that someone blocked you.
+- Helpers in a `private` schema (not exposed by the API, no grants):
+  `require_user` (signed in and onboarded), `lock_pair`,
+  `blocked_between`, `are_friends`, `make_friends`. **Milestone 5 adds the
+  direct conversation to `make_friends`.**
+- **Concurrency:** every function that touches a pair first takes
+  `pg_advisory_xact_lock` on the hashed sorted pair. A row lock can't cover a
+  request that doesn't exist yet (both users sending at once). Respond and
+  cancel read the request, lock, then re-read it, since the first read can
+  be stale. Control run with the lock disabled: the second simultaneous send
+  failed with a unique-index error instead of making them friends.
+- Error codes: `42501` (not signed in / not onboarded / not your request),
+  `22023` (bad argument), and custom `TB001` blocked, `TB002` already
+  friends, `TB003` no longer pending, `TB004` rate limit, `TB005` 24 h after
+  a decline. PostgREST answers the custom ones with HTTP 400 (checked).
+- Limits: search 3–20 characters of `[a-z0-9_]` (so `_` is the only LIKE
+  wildcard possible; it's escaped), 20 results, 30 searches/minute; 20
+  requests/hour; 24 h before re-asking someone who declined. The counts aren't
+  locked, so parallel calls could overshoot by one or two (harmless).
+- Tests: `friend_requests.test.sql` (66 checks); `npm run db:race`
+  (`scripts/db/race.sh`, two real sessions: simultaneous sends, accept vs
+  block in both orders).
+
+**Frontend:**
+
+| File | Role |
+|---|---|
+| `src/pages/People.tsx` | `/people`: search box (500 ms pause), results with actions |
+| `src/pages/Requests.tsx` | `/requests`: waiting for you / sent; declined or cancelled rows leave the list |
+| `src/pages/UserProfile.tsx` | `/u/:username`: profile, actions, block with confirmation |
+| `src/components/RelationActions.tsx` | Add / Cancel / Accept·Decline / Friends / Unblock; asks the server for the new relation after each action |
+| `src/components/PersonRow.tsx` | Avatar + names linking to the profile |
+| `src/components/AppHeader.tsx` | Adds People and Requests links, red badge with the incoming count |
+| `src/lib/friends.ts` | RPC wrappers, pending lists, incoming count, a window event so the badge refreshes |
+| `src/lib/friendRules.ts` | Search validation and error messages (+ tests) |
+| `src/lib/useUserSearch.ts`, `useIncomingCount.ts` | Hooks |
+
+Behaviour worth knowing:
+
+- No realtime yet (milestone 7): another person's action shows after a
+  reload or navigation.
+- A requester can read their own request's status, so they can tell they
+  were declined (and the 24 h message says so). Acceptable for a friends app.
+- The blocked user can still open the blocker's profile at `/u/<name>`
+  (decision below); it shows "Add friend", and sending gives a vague error.
+- e2e: 75 checks (new sections 19–25, two users in one browser).
+
 ## Decisions
 
 Accepted by the developer (spec section 11):
@@ -275,9 +340,15 @@ SMTP** for auth emails, no domain (setup in open items 2–3).
 
 Also decided: **public avatar bucket** with 2 MB, JPEG/PNG/WebP (milestone 3).
 
+Also decided (milestone 4, 16 Oct 2026): build `friendships` in milestone 4;
+search is a username prefix, 3+ characters, 20 results, 30/minute; 20
+requests/hour, 24 h before re-asking after a decline; a block hides the
+blocker from search but not from a direct profile read; people you blocked
+stay in your search, marked blocked.
+
 Recommendations not yet explicitly confirmed (fine to follow, but mention them
-when they come up): Supabase Realtime before a custom WebSocket server; prefix
-username search (min 3 chars, max 20 results); no request expiry.
+when they come up): Supabase Realtime before a custom WebSocket server; no
+request expiry.
 
 Design: app name **Thread Buddies** (renamed from "Thread" on 15 Oct 2026,
 in the UI since milestone 3); font **Manrope**; accent **#f55252**; blacks
@@ -324,7 +395,7 @@ by Claude to match it.
      should be able to sign in).
    Spec sections 2, 4 and 9 updated (spec v2.3).
 4. **Hosted project setup** (at deployment): push the pending migrations
-   (profiles, avatars, avatar fixes), apply the auth settings. SMTP is done. Ask first.
+   (profiles, avatars, avatar fixes, friend requests), apply the auth settings. SMTP is done. Ask first.
 5. Bundle is ~261 kB (83 kB gzipped). Fine for now; code-split later.
 6. Accessibility note, left as designed: white text on `#f55252` is about
    3.2:1 contrast, below 4.5:1. Near-black text on the red would pass.
@@ -333,7 +404,6 @@ by Claude to match it.
    objects don't). SQL can't delete Storage files, so cleanup needs an Edge
    Function (list files not referenced by any `avatar_path`). Rare and tiny at
    this scale; handle with account deletion or milestone 10.
-
 8. **Git remote URL.** The GitHub repo was renamed to `treads-buddies`, but
    the Mac's `origin` still points at `cuddly-garbanzo` (GitHub redirects, so
    it works). Update with
@@ -341,28 +411,26 @@ by Claude to match it.
 
 ## Next phase
 
-### Milestone 4: user discovery and requests (per spec sections 3 and 5)
+### Milestone 5: friendships and the direct conversation (spec sections 3 and 5)
 
 Plan outline to present for approval:
 
-- **Tables** from spec section 5: `friend_requests` (history kept; partial
-  unique index: at most one pending request per unordered pair), `blocks`.
-  Clients get no insert/update/delete; reads limited by RLS to rows you are
-  part of.
-- **Functions** (security definer, `search_path = ''`): `send_friend_request`,
-  `cancel_friend_request`, `respond_to_friend_request` (decline here;
-  accept creates the friendship in milestone 5, or both together; decide in
-  the plan), `block_user` / unblock. Status transitions enforced inside
-  them; re-requests after a decline allowed but rate-limited (decided);
-  blocking stops requests both ways and hides users from search.
-- **Search:** prefix match on username, min 3 chars, max 20 results
-  (recommendation, confirm). Exclude yourself and anyone in a block with you.
-  Consider an index for prefix search (`text_pattern_ops`).
-- **UI:** a find-friends screen, a requests list (incoming/outgoing) with
-  accept/decline/cancel, block from a profile.
-- **Tests:** pgTAP for every transition, the pair uniqueness in both
-  directions, blocks, rate limit, and that clients can't write the tables
-  directly; e2e for search → request → accept/decline/cancel → block.
+- **Tables** from spec section 5: `conversations`, `direct_conversations`
+  (UNIQUE sorted pair), `conversation_members`. Clients read only their own
+  (RLS via membership); no client writes.
+- **Accept creates the conversation:** extend `private.make_friends` to
+  create the conversation, the pair mapping and both memberships with
+  `INSERT … ON CONFLICT DO NOTHING`, still under the pair lock. Re-friending
+  reuses the existing conversation. Backfill conversations for friendships
+  made in milestone 4 (the migration can do it).
+- **`unfriend(other)`:** deletes the friendship row only; conversation and
+  memberships stay (history readable, sending stops in milestone 6).
+- **UI:** friend list on the home screen (replaces the placeholder), unfriend
+  from the profile page with confirmation.
+- **Tests:** pgTAP for unfriend permissions, one conversation per pair under
+  re-friending, memberships surviving unfriend and block; extend
+  `race.sh` with two accepts creating one conversation; e2e for the list and
+  unfriend.
 
 ## Tooling and gotchas
 
@@ -373,6 +441,11 @@ Plan outline to present for approval:
 - Changing `supabase/config.toml` needs `npx supabase stop && npx supabase start`;
   a restart reuses the old data ("from backup"), so follow with
   `npm run db:reset` to reapply migrations.
+- **`npm run db:race`** runs the two-session concurrency checks
+  (`scripts/db/race.sh`, via `docker exec psql`). Run it with `db:test` when
+  the friend functions change.
+- `oxfmt` has no config file: running it by hand formats with double quotes
+  and semicolons. Only `db:types` uses it; don't run it on `src`.
 - `npm run db:types` regenerates and formats `src/lib/database.types.ts`; run
   it after every migration.
 - **Supabase auth callback:** never `await` Supabase calls inside

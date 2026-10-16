@@ -5,10 +5,13 @@ import { CheckEmail } from './pages/CheckEmail.tsx'
 import { ForgotPassword } from './pages/ForgotPassword.tsx'
 import { Home } from './pages/Home.tsx'
 import { Onboarding } from './pages/Onboarding.tsx'
+import { People } from './pages/People.tsx'
 import { ProfileSettings } from './pages/ProfileSettings.tsx'
+import { Requests } from './pages/Requests.tsx'
 import { ResetPassword } from './pages/ResetPassword.tsx'
 import { SignIn } from './pages/SignIn.tsx'
 import { SignUp } from './pages/SignUp.tsx'
+import { UserProfile } from './pages/UserProfile.tsx'
 
 const router = createBrowserRouter([
   {
@@ -33,6 +36,9 @@ const router = createBrowserRouter([
     children: [
       { path: '/', element: <Home /> },
       { path: '/settings/profile', element: <ProfileSettings /> },
+      { path: '/people', element: <People /> },
+      { path: '/requests', element: <Requests /> },
+      { path: '/u/:username', element: <UserProfile /> },
     ],
   },
   { path: '*', element: <Navigate to="/" replace /> },
