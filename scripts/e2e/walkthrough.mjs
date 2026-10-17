@@ -1335,6 +1335,79 @@ await go(APP + chatPath)
 await waitFor(`document.querySelectorAll('.bubble-image img').length >= 2 && [...document.querySelectorAll('.bubble-image img')].every(i => i.complete)`, 'mobile images')
 await shot('42-chat-images-mobile')
 check(!(await evaluate('document.documentElement.scrollWidth > window.innerWidth')), 'a chat with images has no horizontal scroll at 390px')
+
+console.log('49. Every screen on small phones')
+// Tap targets under 44 px (Apple's guideline) and inputs under 16 px (iOS
+// Safari zooms the page when such a field gets focus).
+const mobileProblems = `(() => {
+  const visible = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden' };
+  const label = (el) => (el.getAttribute('aria-label') || el.innerText || el.placeholder || el.tagName).trim().slice(0, 30);
+  const small = [...document.querySelectorAll('a, button, input:not([type=file]), textarea, select')]
+    .filter(visible)
+    // Links inside running text are exempt (WCAG 2.5.8).
+    .filter((el) => !(el.tagName === 'A' && el.closest('p')))
+    .filter((el) => { const r = el.getBoundingClientRect(); return r.height < 44 || r.width < 44 })
+    .map((el) => { const r = el.getBoundingClientRect(); return label(el) + ' ' + Math.round(r.width) + 'x' + Math.round(r.height) });
+  const tinyText = [...document.querySelectorAll('input:not([type=file]), textarea')]
+    .filter(visible)
+    .filter((el) => parseFloat(getComputedStyle(el).fontSize) < 16)
+    .map(label);
+  // A container that clips its overflow hides it from the scroll check.
+  const offscreen = [...document.querySelectorAll('a, button, input:not([type=file]), textarea')]
+    .filter(visible)
+    .filter((el) => { const r = el.getBoundingClientRect(); return r.right > window.innerWidth + 0.5 || r.left < -0.5 })
+    .map(label);
+  return { scroll: document.documentElement.scrollWidth > window.innerWidth || offscreen.length > 0, offscreen, small, tinyText };
+})()`
+const screens = [
+  ['home', '/'],
+  ['people', '/people'],
+  ['requests', '/requests'],
+  ['settings', '/settings/profile'],
+  ['profile', `/u/${ana.username}`],
+  ['chat', chatPath],
+]
+for (const width of [360, 430]) {
+  await viewport(width, 800, true)
+  for (const [name, url] of screens) {
+    await go(APP + url)
+    await sleep(600)
+    const found = await evaluate(mobileProblems)
+    if (width === 360) await shot(`43-${name}-360`)
+    check(!found.scroll, `${name} at ${width}px: no horizontal scroll, nothing cut off${found.offscreen.length ? ` (${found.offscreen.join('; ')})` : ''}`)
+    check(found.small.length === 0, `${name} at ${width}px: tap targets at least 44 px${found.small.length ? ` (${found.small.join('; ')})` : ''}`)
+    check(found.tinyText.length === 0, `${name} at ${width}px: input text at least 16 px${found.tinyText.length ? ` (${found.tinyText.join('; ')})` : ''}`)
+  }
+}
+
+console.log('50. Delete account')
+await viewport(1680, 900)
+await anaBrowser.go(APP + '/settings/profile')
+await anaBrowser.click('Delete account')
+await anaBrowser.waitFor(`document.querySelector('.danger-zone .confirm-box')`, 'delete form')
+await anaBrowser.type('Your password', 'not-my-password')
+await anaBrowser.click('Delete my account')
+await anaBrowser.waitFor(`document.body.innerText.includes("That password isn't right.")`, 'wrong password', 8000)
+check(true, 'a wrong password is refused and nothing is deleted')
+await anaBrowser.type('Your password', newPassword)
+await anaBrowser.click('Delete my account')
+await anaBrowser.waitFor(`location.pathname === '/sign-in' && document.body.innerText.includes('Your account was deleted.')`, 'deleted', 10000)
+check(true, 'with the right password the account is deleted and ana is signed out')
+await anaBrowser.type('Email', ana.email)
+await anaBrowser.type('Password', newPassword)
+await anaBrowser.click('Enter Thread Buddies')
+await anaBrowser.waitFor(`document.body.innerText.includes('Invalid email or password.')`, 'cannot sign in', 8000)
+check(true, 'signing in again fails: the account is gone')
+await go(APP + '/')
+await waitFor(`[...document.querySelectorAll('.chat-row')].some(r => r.innerText.includes('Deleted user'))`, 'deleted on home', 8000)
+check(true, 'ben’s chat list shows the conversation with “Deleted user”')
+await go(APP + chatPath)
+await waitFor(`document.querySelector('.chat-readonly')`, 'read only')
+check(
+  (await text()).includes('This account was deleted. You can still read your messages.') &&
+    (await evaluate(`document.querySelectorAll('.bubble-image img').length`)) >= 2,
+  'ben keeps the history, images included, read only',
+)
 await anaBrowser.close()
 rmSync(imageFiles, { recursive: true, force: true })
 

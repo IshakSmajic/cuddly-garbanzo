@@ -34,6 +34,10 @@
 
 body {
   margin: 0;
+  /* viewport-fit=cover draws under a phone's notch and rounded corners; the
+     safe-area insets keep content clear of them (0 everywhere else). */
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
   background: var(--black-1);
 }
 
@@ -753,6 +757,12 @@ textarea.field-input {
   justify-content: flex-start;
 }
 
+.danger-zone {
+  margin-top: 40px;
+  padding-top: 24px;
+  border-top: 1px solid var(--line);
+}
+
 @media (max-width: 900px) {
   .home-nav {
     margin-left: 0;
@@ -834,7 +844,10 @@ textarea.field-input {
 }
 
 .chat-page {
+  /* dvh follows the browser's toolbars and, with interactive-widget, the
+     on-screen keyboard, so the composer stays above it. svh is the fallback. */
   height: 100svh;
+  height: 100dvh;
   min-height: 0;
 }
 
@@ -999,7 +1012,8 @@ textarea.field-input {
 
 .chat-composer {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  /* minmax(0, …): the textarea may shrink below its natural width. */
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: end;
   gap: 10px;
   padding: 12px 16px 16px;
@@ -1284,4 +1298,70 @@ textarea.field-input {
   font-size: 24px;
   line-height: 1;
   cursor: pointer;
+}
+
+/* Touch screens and small phones --------------------------------------------------- */
+@media (max-width: 600px), (pointer: coarse) {
+  /* Under 16 px, iOS Safari zooms the whole page when a field gets focus. */
+  .field-input,
+  .field-prefix,
+  .chat-input textarea.field-input {
+    font-size: 16px;
+  }
+
+  /* 44 px tap targets (Apple's guideline). Text links keep their look; only
+     the area that answers a tap grows. */
+  .logo-link,
+  .nav-link,
+  .profile-link,
+  .link-button,
+  .settings-back,
+  .chat-name {
+    display: inline-flex;
+    align-items: center;
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  /* The bigger targets space themselves; keep logo, avatar and Sign out on one row at 360 px. */
+  .home-user {
+    gap: 8px;
+  }
+
+  .home-bar {
+    padding-top: max(12px, env(safe-area-inset-top));
+    padding-bottom: 12px;
+  }
+
+  .button-compact {
+    height: 44px;
+  }
+
+  .chat-back {
+    width: 44px;
+    height: 44px;
+  }
+
+  /* The whole box takes the tap, not just the line of text inside it.
+     Two classes, to win over .field-control.is-multiline. */
+  .field-control.chat-input {
+    padding: 0;
+  }
+
+  .chat-input textarea.field-input {
+    min-height: 44px;
+    padding: 10px 14px;
+  }
+
+  .chat-composer,
+  .chat-readonly {
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+  }
+}
+
+/* The chat hides the app bar on phones, so its own head clears the notch. */
+@media (max-width: 480px) {
+  .chat-head {
+    padding-top: max(16px, env(safe-area-inset-top));
+  }
 }

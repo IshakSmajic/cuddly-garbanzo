@@ -48,13 +48,15 @@ npm run db:reset     # rebuild local DB from migrations
 npm run db:test      # pgTAP tests in supabase/tests/database
 npm run db:race      # two-session concurrency checks (friend requests, conversations)
 npm run db:realtime  # Realtime delivery and private channels vs RLS, real users
+npm run db:functions # Edge Functions (cleanup-files, delete-account), real users
 npm run db:types     # regenerate src/lib/database.types.ts after migrations
 npm run spec:build   # regenerate the spec .docx from scripts/spec/build_spec.py
 ```
 
 Before reporting a milestone done, run build, lint, `npm test`, `db:test`,
 `db:race` and `db:realtime` when the friend, message or channel rules
-changed, and `test:e2e` when screens changed.
+changed, `db:functions` when the Edge Functions or file rules changed, and
+`test:e2e` when screens changed.
 
 ## Gotchas
 

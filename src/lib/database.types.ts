@@ -354,15 +354,18 @@ export type Database = {
       search_events: {
         Row: {
           created_at: string;
+          id: number;
           user_id: string;
         };
         ComputedFields: never;
         Insert: {
           created_at?: string;
+          id?: never;
           user_id: string;
         };
         Update: {
           created_at?: string;
+          id?: never;
           user_id?: string;
         };
         Relationships: [
@@ -418,6 +421,13 @@ export type Database = {
           other_id: string;
           unread_count: number;
           username: string;
+        }[];
+      };
+      orphan_files: {
+        Args: { max_files?: number; min_age?: string };
+        Returns: {
+          bucket_id: string;
+          name: string;
         }[];
       };
       relationship_with: {

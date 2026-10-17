@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router'
 import { AuthLayout } from '../components/AuthLayout.tsx'
 import { Button } from '../components/Button.tsx'
 import { Field } from '../components/Field.tsx'
+import { accountDeletion } from '../lib/account.ts'
 import { linkError } from '../lib/linkError.ts'
 import { supabase } from '../lib/supabase.ts'
 
@@ -11,7 +12,7 @@ export function SignIn() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(
-    linkError ? `That link didn't work: ${linkError}. Sign in, or request a new one.` : null,
+    linkError ? "That link didn't work: it may have expired or already been used. Sign in, or request a new one." : null,
   )
   const [submitting, setSubmitting] = useState(false)
 
@@ -23,6 +24,7 @@ export function SignIn() {
     }
     setSubmitting(true)
     setError(null)
+    accountDeletion.done = false
     const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password })
     setSubmitting(false)
 
@@ -41,6 +43,11 @@ export function SignIn() {
   return (
     <AuthLayout eyebrow="Welcome back" title="Sign in." subtitle="Continue to your conversations.">
       <form className="auth-fields" onSubmit={onSubmit} noValidate>
+        {accountDeletion.done && (
+          <p className="form-note" role="status">
+            Your account was deleted.
+          </p>
+        )}
         <Field
           label="Email"
           type="email"

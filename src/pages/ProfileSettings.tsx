@@ -4,6 +4,7 @@ import { useAuth } from '../auth/context.ts'
 import { AppHeader } from '../components/AppHeader.tsx'
 import { Avatar } from '../components/Avatar.tsx'
 import { Button } from '../components/Button.tsx'
+import { DeleteAccount } from '../components/DeleteAccount.tsx'
 import { Field, TextAreaField } from '../components/Field.tsx'
 import { AVATAR_INPUT_TYPES, avatarFileError } from '../lib/avatar.ts'
 import { changeAvatar, removeAvatar } from '../lib/avatarUpload.ts'
@@ -140,6 +141,8 @@ export function ProfileSettings() {
             {saving ? 'Saving…' : 'Save changes'}
           </Button>
         </form>
+
+        <DeleteAccount />
       </main>
     </div>
   )

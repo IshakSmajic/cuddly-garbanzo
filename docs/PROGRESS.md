@@ -1,7 +1,8 @@
 # Thread Buddies — progress and handoff
 
-Last updated: 17 October 2026, after milestone 9 was built on the branch
-`milestone-9-images` (not committed yet). Milestone 10 has not started.
+Last updated: 17 October 2026. Milestone 9 is committed and pushed
+(`3dc17ee`). Milestone 10a (local hardening) is built on the branch
+`milestone-10-release`, not committed; 10b (deploy) is next.
 
 This file is the running record of the project: what is done, what is live,
 what was decided, and what comes next. Read it at the start of a session and
@@ -22,8 +23,8 @@ are in `CLAUDE.md`.
 | 6 | Direct messaging persistence: history, friends-only sending, paging | Done (commit `791cfe9`) |
 | 7 | Realtime messaging: live delivery, reconnect recovery, dedupe | Done (commit `da52688`) |
 | 8 | Chat UX: typing, presence, unread counts, read receipts | Done (commit `4969d4e`) |
-| 9 | Media: image messages | Built, all checks pass (branch `milestone-9-images`, not committed) |
-| 10 | Release: deploy (Vercel + Gmail SMTP), security review, mobile polish, file cleanup | **Next.** Outline below |
+| 9 | Media: image messages | Done (commit `3dc17ee`) |
+| 10 | Release. **10a** security review, file cleanup, account deletion, mobile polish: built (branch `milestone-10-release`). **10b** deploy: next | In progress |
 
 Milestones 1–7 make the app usable by friends; 8–10 improve it.
 
@@ -89,7 +90,14 @@ applies again already.
 
 ### Local Supabase (Docker, 12 containers)
 
-- All eleven migrations applied (through `message_images`). Auth settings in `supabase/config.toml`:
+- All twelve migrations applied (through `release_hardening`). Vault holds
+  `project_url` and `cleanup_secret` (from `supabase/seed.sql`, which runs
+  on `db:reset`; on an existing database run it once by hand).
+- Edge Functions (`supabase/functions/`) are served by `supabase start`.
+  They need `supabase/functions/.env` (git-ignored) with
+  `CLEANUP_SECRET=local-cleanup-secret`, matching the seed. **On the Mac:**
+  create that file, then `npx supabase stop && npx supabase start` (the
+  functions folder is mounted only at start). Auth settings in `supabase/config.toml`:
   email confirmation on, minimum password 8, site URL `http://localhost:5173`,
   redirect allow-list (exact URLs) `http://localhost:5173`,
   `http://localhost:5173/reset-password` and the same two on `127.0.0.1`,
@@ -103,7 +111,7 @@ applies again already.
 
 - Linked to the repo. Has migrations 1 and 2 only, so the public schema is
   **empty**. The demo tables and the demo accounts (alice/bob) are deleted.
-- **Not yet applied:** the profiles, avatars, avatar-fixes, friend-requests, conversations, messages, realtime, chat-ux and message-images migrations, the auth settings (site URL,
+- **Not yet applied:** the profiles, avatars, avatar-fixes, friend-requests, conversations, messages, realtime, chat-ux, message-images and release-hardening migrations, the two Edge Functions, the Vault secrets, the auth settings (site URL,
   redirect URLs including `/reset-password`, confirm email, password length,
   secure password change, password-changed notification). Custom SMTP
   (Gmail) **is** configured (open item 2).
@@ -612,6 +620,65 @@ Behaviour worth knowing:
   viewer and Esc; image-only message and "Photo" on Home; 390 px layout.
   Whole walkthrough: 172 checks, passed twice in a row.
 
+### Milestone 10a: security review, file cleanup, account deletion, mobile
+
+**Database** (`supabase/migrations/20261017140000_release_hardening.sql`):
+
+- Advisor fixes: indexes `conversation_members_last_read` and
+  `messages_sender_member` (FKs checked on delete), `search_events.id`
+  primary key. Left as is, on purpose: `search_events` has RLS and no
+  policies (clients must see nothing). `search_events` doesn't need pruning:
+  `search_users` deletes each user's old rows itself.
+- Trigger functions no longer executable by clients (execute is checked when
+  a trigger is created, not when it fires).
+- `public.orphan_files(min_age default 1 day)`: files no `avatar_path` or
+  `message_attachments` row points at, older than a day (an upload may be
+  mid-send). Executable by `service_role` only.
+- `pg_cron` job `cleanup-files`, daily 03:17 UTC: `pg_net` POSTs to the
+  Edge Function; address and secret read from **Vault** at run time, so
+  neither is in a migration.
+- Tests: `release_hardening.test.sql` (13 checks).
+
+**Edge Functions** (`supabase/functions/`):
+
+- `cleanup-files`: `verify_jwt = false` (config.toml), checks its own
+  `CLEANUP_SECRET` (constant-time); lists through `orphan_files`, deletes
+  through the Storage API in batches of 100. SQL can't delete files
+  (`storage.protect_delete`; deleting the row would orphan the bytes).
+- `delete-account`: the caller's token checked by Auth (`getUser`), then the
+  **password again** (a throwaway sign-in), then `auth.admin.deleteUser`.
+  The foreign keys do the rest; the avatar goes on the next cleanup.
+- `npm run db:functions` (`scripts/db/functions-check.mjs`, 24 checks):
+  wrong or missing secrets (including the public key and a user token) get
+  401; only orphans are deleted; deletion needs the password; afterwards the
+  other person keeps messages and images as "Deleted user" and can't send.
+
+**Security review** (manual, beyond the advisors): every security-definer
+function pins `search_path = ''`; `anon` has no table grants and no usage
+on `private`; every public table has RLS; column grants only on
+`messages (conversation_id, client_id, content)` and `profiles (username,
+display_name, bio)`; no `dangerouslySetInnerHTML`; no secret in `dist`.
+One fix: the sign-in page showed `error_description` from the URL hash word
+for word, so anyone could link to our page with their own message (content
+injection). It now shows a fixed text.
+
+**Frontend:**
+
+| File | Role |
+|---|---|
+| `src/components/DeleteAccount.tsx`, `src/lib/account.ts` | Settings → Delete account: password, explanation, then the function; sign-in says "Your account was deleted." (a module flag: signing out swaps the page out before it could navigate) |
+| `index.html` | `viewport-fit=cover`, `interactive-widget=resizes-content` |
+| `src/index.css` | On phones and touch screens: 44 px tap targets, 16 px input text (iOS zooms below that), safe-area insets, `100dvh` chat |
+| `src/lib/linkError.ts`, `src/pages/SignIn.tsx` | Fixed text for failed email links |
+
+- e2e: step 49 checks six screens at 360 and 430 px (no overflow, nothing
+  cut off, 44 px targets, 16 px inputs) with screenshots; step 50 deletes
+  an account. Whole walkthrough: 213 checks.
+- Found by looking at the screenshots, not by the checks at first: the Send
+  button was clipped at 360 px (grid `1fr` can't shrink below the textarea's
+  natural width; now `minmax(0, 1fr)`), so the audit now also fails on
+  controls cut off at the edge.
+
 ## Decisions
 
 Accepted by the developer (spec section 11):
@@ -653,6 +720,8 @@ announced live on the conversation channel.
 Recommendations not yet explicitly confirmed (fine to follow, but mention them
 when they come up): no request expiry.
 
+- **Account deletion in the app (milestone 10, 17 Oct 2026):** Settings →
+  Delete account, with the password asked again.
 - **Message images (milestone 9, 17 Oct 2026):** one image per message,
   optional caption; JPEG/PNG/WebP up to 20 MB picked, scaled to 2048 px and
   re-encoded to WebP or JPEG (strips EXIF); bucket limit 5 MB; no GIFs;
@@ -707,7 +776,7 @@ by Claude to match it.
 5. Bundle is ~261 kB (83 kB gzipped). Fine for now; code-split later.
 6. Accessibility note, left as designed: white text on `#f55252` is about
    3.2:1 contrast, below 4.5:1. Near-black text on the red would pass.
-7. **Leftover files (avatars and message images): milestone 10.** A failed
+7. **Leftover files. Done in milestone 10a** (cleanup-files, daily). A failed
    delete of an old avatar leaves an unused object; so will account deletion
    (profiles cascade, Storage objects don't). Message images: a send that
    fails after the upload, or a conversation deleted once both accounts are
@@ -736,22 +805,29 @@ by Claude to match it.
 
 ## Next phase
 
-### Milestone 10: release (spec section 9)
+### Milestone 10b: deploy (ask before every hosted step)
 
-Plan outline to present for approval:
-
-- **Security review:** the Supabase security and performance advisors on the
-  local stack, a pass over every policy and security-definer function, and
-  the `/security-review` of the branch.
-- **File cleanup Edge Function** (open item 7), scheduled with `pg_cron`.
-- **Mobile polish:** a pass at 360–430 px over every screen; safe-area
-  insets; the composer with the on-screen keyboard.
-- **Deploy** (ask first; open items 1, 3 and 4): recreate
-  `.env.production.local` on Arch, `vercel.json` rewrite, Vercel project and
-  env vars, `supabase db push` of the pending migrations, hosted auth
-  settings and redirect URLs, then a walkthrough on the real address.
-- Bundle size (open item 5) and the contrast note (open item 6) can be
-  revisited here.
+1. **`.env.production.local`** on Arch: `VITE_SUPABASE_URL` and
+   `VITE_SUPABASE_PUBLISHABLE_KEY` of the hosted project (dashboard →
+   Project Settings → API). Build and check `dist` has no secret.
+2. **`vercel.json`**: rewrite every path to `/index.html`.
+3. **Vercel** (developer, in the browser): import the repo (preset Vite),
+   add the two `VITE_` variables. Note the `*.vercel.app` address.
+4. **Hosted Supabase** (`izshntiffhekuvpirixf`):
+   - `npx supabase db push --dry-run`, then `db push` (migrations 3–12).
+   - Auth: site URL = the Vercel address; redirect allow-list = the address
+     and `<address>/reset-password`; confirm email on; minimum password 8;
+     secure password change; password-changed email. Check the email rate
+     limit with Gmail SMTP.
+   - `npx supabase functions deploy cleanup-files delete-account`;
+     `npx supabase secrets set CLEANUP_SECRET=<new random value>`.
+   - Vault (SQL editor): `select vault.create_secret('https://<ref>.supabase.co', 'project_url');`
+     and the same `CLEANUP_SECRET` as `cleanup_secret`.
+   - Advisors on the hosted project (`db advisors --linked`).
+5. **Smoke test on the real address:** sign up (Gmail delivers), onboarding,
+   friend request, messages live between two devices, an image, password
+   reset, delete a test account; a real phone. Then trigger the cron job's
+   request once and check `net._http_response`.
 
 ## Tooling and gotchas
 

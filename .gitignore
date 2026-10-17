@@ -25,3 +25,6 @@ dist-ssr
 
 # Browser walk-through screenshots
 scripts/e2e/shots/
+
+# Local secrets for Edge Functions (hosted ones are set with `supabase secrets set`)
+supabase/functions/.env

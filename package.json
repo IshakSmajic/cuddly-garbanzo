@@ -15,6 +15,7 @@
     "db:test": "supabase test db",
     "db:race": "bash scripts/db/race.sh",
     "db:realtime": "node scripts/db/realtime-rls.mjs",
+    "db:functions": "node scripts/db/functions-check.mjs",
     "db:types": "supabase gen types typescript --local > src/lib/database.types.ts && oxfmt src/lib/database.types.ts",
     "test": "vitest run",
     "test:e2e": "scripts/e2e/run.sh",
