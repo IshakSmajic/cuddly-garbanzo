@@ -1,8 +1,9 @@
 # Thread Buddies — progress and handoff
 
 Last updated: 17 October 2026. Milestone 9 is committed and pushed
-(`3dc17ee`). Milestone 10a (local hardening) is built on the branch
-`milestone-10-release`, not committed; 10b (deploy) is next.
+(`3dc17ee`). Milestone 10a is committed and pushed (`bf4a305`). Milestone 10b
+(deploy) is in progress on `milestone-10-deploy`: hosted database and
+functions done, Vercel next.
 
 This file is the running record of the project: what is done, what is live,
 what was decided, and what comes next. Read it at the start of a session and
@@ -109,14 +110,26 @@ applies again already.
 
 ### Hosted Supabase project `cuddly-garbanzo` (ref `izshntiffhekuvpirixf`)
 
-- Linked to the repo. Has migrations 1 and 2 only, so the public schema is
-  **empty**. The demo tables and the demo accounts (alice/bob) are deleted.
-- **Not yet applied:** the profiles, avatars, avatar-fixes, friend-requests, conversations, messages, realtime, chat-ux, message-images and release-hardening migrations, the two Edge Functions, the Vault secrets, the auth settings (site URL,
-  redirect URLs including `/reset-password`, confirm email, password length,
-  secure password change, password-changed notification). Custom SMTP
+- Linked on both machines (`npx supabase login` + `link`; the CLI login
+  and the database password stay with the developer).
+- **Done 17 Oct 2026 (milestone 10b):** all 12 migrations pushed (dry run
+  first); Edge Functions `cleanup-files` and `delete-account` deployed;
+  function secret `CLEANUP_SECRET` (random, 32 bytes; nobody needs to know
+  it) and Vault secrets `project_url` and `cleanup_secret` set. Checked: the
+  cron job's request returns 200 through Vault and pg_net; calls without the
+  secret get 401; `delete-account` answers the CORS preflight. To rotate the
+  secret, set both again with the same new value.
+- **Hosted advisors, accepted:** 11 × `authenticated_security_definer_function_executable`
+  (the security-definer functions are the app's write path by design, spec
+  section 5; each checks `auth.uid()` and its rules; pgTAP tries to misuse
+  them), `search_events` RLS without policies (deliberate), `unused_index`
+  (no data yet). The local CLI's linter doesn't report the first one.
+- **Not yet done:** the auth settings (site URL, redirect URLs including
+  `/reset-password`, confirm email, password length, secure password change,
+  password-changed notification), which need the Vercel address. Custom SMTP
   (Gmail) **is** configured (open item 2).
-  These are done at deployment time, with the developer's go-ahead.
-- No frontend is deployed anywhere yet.
+- No frontend is deployed yet; `vercel.json` (SPA rewrite, security headers)
+  is ready.
 
 ## What has been built
 
