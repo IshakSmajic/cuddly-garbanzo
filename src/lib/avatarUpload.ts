@@ -1,4 +1,5 @@
 import { AVATAR_SIZE, centreSquare } from './avatar.ts'
+import { encodeCanvas, extensionFor, newCanvas, readImage } from './canvasImage.ts'
 import { supabase } from './supabase.ts'
 
 const bucket = () => supabase.storage.from('avatars')
@@ -9,30 +10,15 @@ export function avatarUrl(path: string): string {
 
 /**
  * Crops the picked image to a centred square, scales it to 512 px and
- * re-encodes it. Re-encoding drops the file's metadata (EXIF), which on phone
- * photos can include the GPS position where the picture was taken.
+ * re-encodes it (which drops its metadata; see canvasImage.ts).
  */
 async function squareImage(file: File): Promise<Blob> {
-  // createImageBitmap applies the EXIF rotation, so phone photos stay upright.
-  const bitmap = await createImageBitmap(file).catch(() => {
-    throw new Error("That file couldn't be read as an image.")
-  })
+  const bitmap = await readImage(file)
   const { x, y, side } = centreSquare(bitmap.width, bitmap.height)
-  const canvas = document.createElement('canvas')
-  canvas.width = canvas.height = AVATAR_SIZE
-  const context = canvas.getContext('2d')
-  if (!context) throw new Error("Your browser couldn't process the image.")
-  context.imageSmoothingQuality = 'high'
+  const { canvas, context } = newCanvas(AVATAR_SIZE, AVATAR_SIZE)
   context.drawImage(bitmap, x, y, side, side, 0, 0, AVATAR_SIZE, AVATAR_SIZE)
   bitmap.close()
-
-  const encode = (type: string) =>
-    new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, 0.85))
-  // Browsers that can't encode WebP hand back a PNG instead; use JPEG then.
-  const webp = await encode('image/webp')
-  const blob = webp?.type === 'image/webp' ? webp : await encode('image/jpeg')
-  if (!blob) throw new Error("Your browser couldn't process the image.")
-  return blob
+  return encodeCanvas(canvas)
 }
 
 /**
@@ -43,7 +29,7 @@ async function squareImage(file: File): Promise<Blob> {
  */
 export async function changeAvatar(userId: string, file: File): Promise<void> {
   const image = await squareImage(file)
-  const extension = image.type === 'image/webp' ? 'webp' : 'jpg'
+  const extension = extensionFor(image.type)
   // A new random name every time: nothing is overwritten, and no browser can
   // show a cached copy of the previous picture.
   const path = `${userId}/${crypto.randomUUID()}.${extension}`

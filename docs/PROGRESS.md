@@ -1,7 +1,7 @@
 # Thread Buddies — progress and handoff
 
-Last updated: 16 October 2026, after milestone 8 (commit `4969d4e`, pushed).
-Milestone 9 has not started.
+Last updated: 17 October 2026, after milestone 9 was built on the branch
+`milestone-9-images` (not committed yet). Milestone 10 has not started.
 
 This file is the running record of the project: what is done, what is live,
 what was decided, and what comes next. Read it at the start of a session and
@@ -22,8 +22,8 @@ are in `CLAUDE.md`.
 | 6 | Direct messaging persistence: history, friends-only sending, paging | Done (commit `791cfe9`) |
 | 7 | Realtime messaging: live delivery, reconnect recovery, dedupe | Done (commit `da52688`) |
 | 8 | Chat UX: typing, presence, unread counts, read receipts | Done (commit `4969d4e`) |
-| 9 | Media: image messages | **Next.** Plan outline below |
-| 10 | Release: deploy (Vercel + Gmail SMTP), security review, mobile polish | Not started |
+| 9 | Media: image messages | Built, all checks pass (branch `milestone-9-images`, not committed) |
+| 10 | Release: deploy (Vercel + Gmail SMTP), security review, mobile polish, file cleanup | **Next.** Outline below |
 
 Milestones 1–7 make the app usable by friends; 8–10 improve it.
 
@@ -54,8 +54,7 @@ Milestones 1–7 make the app usable by friends; 8–10 improve it.
 
 ### Development machines
 
-- The developer works from two machines; pull before starting (except once
-  on Arch, below).
+- The developer works from two machines; pull before starting.
 - macOS (the original): Docker Desktop (start it with `open -a Docker`),
   Chrome in `/Applications`, both `.env*.local` files present.
 - Arch Linux (since 15 Oct 2026): Docker installed and enabled; the user is in
@@ -65,56 +64,32 @@ Milestones 1–7 make the app usable by friends; 8–10 improve it.
   hosted project's URL and publishable key before deploying (a build without
   it succeeds but the app throws on start).
 
-### Next session on the Arch machine: catch up after the history rewrite
+### Arch machine: catch-up after the history rewrite (done)
 
 On 16 Oct 2026 the history on GitHub was rewritten (open item 9) and
-force-pushed. Arch still has the old history, last at `e2f0221` "Commit
-naming rule" (milestone 3). **Do not `git pull`**: it would merge the old
-commits, co-author lines included, back into `main`. Do this once instead:
+force-pushed. **Git part done on 17 Oct 2026:** Arch's `main` was reset to
+`origin/main` (0 co-author lines), and the remote already pointed at
+`treads-buddies`. Arch turned out to have unpushed work the Mac never saw,
+now kept for reference only (GitHub replaced it with the Mac's milestones 4–8):
 
-1. **Check for work that only exists on Arch:**
-   ```sh
-   git status                          # uncommitted changes?
-   git log --oneline origin/main..main # commits not on GitHub?
-   ```
-   If either shows anything, save it first: `git stash -u` for uncommitted
-   changes, `git branch arch-backup` for local commits. They can be
-   re-applied after step 3 (`git stash pop`, or `git cherry-pick` from
-   `arch-backup`).
-2. **Check the remote** points at the renamed repository:
-   ```sh
-   git remote -v
-   # if it still says cuddly-garbanzo:
-   git remote set-url origin https://github.com/IshakSmajic/treads-buddies.git
-   ```
-3. **Replace the old history with GitHub's:**
-   ```sh
-   git fetch origin
-   git switch main
-   git reset --hard origin/main
-   ```
-4. **Verify:** `git log --oneline -3` shows the same newest commits as
-   GitHub, and
-   `git log --format=%B | grep -ci co-authored-by` prints `0`.
-5. **Bring the rest of the setup up to date** (milestones 4 to 8 happened
-   on the Mac):
-   ```sh
-   npm install
-   npm run db:start   # Docker must be running
-   npm run db:reset   # applies the 6 new migrations; deletes local accounts
-   npm run db:test    # all database tests should pass
-   ```
-   `db:reset` is needed because the local database only has migrations up
-   to milestone 3. It also deletes any accounts made by hand on Arch's local
-   stack (test accounts only; the hosted project is untouched).
-6. Optional: delete `arch-backup` once nothing in it is needed
-   (`git branch -D arch-backup`). Then remove this section from the file.
+- Branch `arch-backup` (`31bb295` "Friend requests, user search and
+  blocking", 15 Oct): a separate milestone 4 with its own
+  `20261015210138_friend_requests.sql`.
+- `~/old-friendships.sql`: an untracked milestone 5 draft migration
+  (`20261015212000_friendships_and_conversations.sql`), moved out of
+  `supabase/migrations` so `db:reset` doesn't apply it.
 
-After this, "pull before starting" applies again.
+**Setup done on 17 Oct 2026:** `npm install`, then `db:reset` (all 10
+migrations; Arch's old local accounts are gone), then `db:test` (218 passing).
+The edge runtime container had stopped and needed a `docker start`.
+
+Once nothing in them is needed, `git branch -D arch-backup`, delete
+`~/old-friendships.sql` and remove this section. "Pull before starting"
+applies again already.
 
 ### Local Supabase (Docker, 12 containers)
 
-- All ten migrations applied (through `chat_ux`). Auth settings in `supabase/config.toml`:
+- All eleven migrations applied (through `message_images`). Auth settings in `supabase/config.toml`:
   email confirmation on, minimum password 8, site URL `http://localhost:5173`,
   redirect allow-list (exact URLs) `http://localhost:5173`,
   `http://localhost:5173/reset-password` and the same two on `127.0.0.1`,
@@ -128,7 +103,7 @@ After this, "pull before starting" applies again.
 
 - Linked to the repo. Has migrations 1 and 2 only, so the public schema is
   **empty**. The demo tables and the demo accounts (alice/bob) are deleted.
-- **Not yet applied:** the profiles, avatars, avatar-fixes, friend-requests, conversations, messages, realtime and chat-ux migrations, the auth settings (site URL,
+- **Not yet applied:** the profiles, avatars, avatar-fixes, friend-requests, conversations, messages, realtime, chat-ux and message-images migrations, the auth settings (site URL,
   redirect URLs including `/reset-password`, confirm email, password length,
   secure password change, password-changed notification). Custom SMTP
   (Gmail) **is** configured (open item 2).
@@ -574,6 +549,69 @@ Behaviour worth knowing:
   for their element. Both browsers use `Emulation.setFocusEmulationEnabled`
   so they count as visible.
 
+### Milestone 9: image messages
+
+**Database** (`supabase/migrations/20261017090000_message_images.sql`):
+
+- Private bucket `message-images`: 5 MB, JPEG or WebP. Paths
+  `{conversation_id}/{uuid}.{jpg|webp}`; `private.image_conversation(name)`
+  parses the folder (anything else → null → every policy refuses).
+- Storage policies: members read (`is_conversation_member`), so former
+  friends keep their images; uploads need `can_send_in` (a current
+  friendship); the uploader may delete a file **no message uses**
+  (`private.image_attached`, security definer); no update policy.
+- `message_attachments` (spec section 5 plus `width`, `height`: a layout hint
+  so the chat reserves the space and doesn't jump). Read-only to clients;
+  visible where the message is. Cascades with its message.
+- `send_image_message(conversation, client_id, path, width, height, caption)`,
+  security definer: same-`client_id` retry returns the stored message;
+  checks `can_send_in`, the folder, that the file exists and is the caller's,
+  that its stored type matches the extension and that it isn't attached
+  yet; **type and size come from `storage.objects.metadata`**, not the
+  client; message and attachment in one transaction. The text insert policy
+  still requires content.
+- Tests: `message_images.test.sql` (37 checks). `npm run db:realtime` gained
+  11 image checks against the real Storage server. `avatars.test.sql`'s
+  "only one delete policy" check now looks at avatar policies only.
+
+**Findings worth remembering:**
+
+- **An embedded select can't see what the RPC just inserted.**
+  `rpc('send_image_message').select('*, attachments:…')` returns
+  `attachments: []`: PostgREST runs the function and the embed as one
+  statement, which reads a snapshot from before the function's insert. The
+  app builds the attachment from what it sent (id 0, only a React key).
+- Storage API error shapes (local stack, checked by `db:realtime`): an
+  existing path → `statusCode` `'409'` (a retry treats it as done); RLS
+  refusal on upload → `'403'`; outsider download or signed link → `404`
+  ("Object not found", which doesn't reveal that the file exists); a type
+  outside the bucket list → `415`.
+- A modal `<dialog>` must not be closed in an effect cleanup: StrictMode
+  re-runs the effect, `close()` fires the close event, and the viewer shut
+  itself at once (found by e2e).
+- A pgTAP fixture matching `%@example.com` also caught the accounts e2e
+  leaves behind; fixtures must name their own ids.
+
+**Frontend:**
+
+| File | Role |
+|---|---|
+| `src/lib/canvasImage.ts` | Decode, canvas, WebP/JPEG encode; shared with avatars (`avatarUpload.ts` now uses it) |
+| `src/lib/images.ts` | Picker limits (JPEG/PNG/WebP, 20 MB), `fitWithin` (2048 px), `bubbleImageWidth` (280 × 320 max), `imagePath` (+ tests) |
+| `src/lib/imageUpload.ts` | `prepareImage` (re-encode → strips EXIF), `sendImageMessage` (upload, then the function; deletes the upload if sending is no longer allowed) |
+| `src/lib/imageUrls.ts` | `useImageUrl`: signed links (1 h, reused until 5 min before expiry), signed in one batch per render, re-signed when an `<img>` fails; your own sends show the local file |
+| `src/lib/messages.ts` | History embeds `attachments`; `messageWithAttachments(id)` for live events |
+| `src/lib/messageRules.ts` | `Attachment`; `mergeMessages` keeps loaded attachments when a live copy without them arrives (+ test) |
+| `src/components/MessageImage.tsx`, `ImageViewer.tsx` | Image in a bubble (fixed shape, retry on failure); full-screen `<dialog>` (Esc, backdrop click) |
+| `src/pages/Chat.tsx` | Attach button, paste, staged preview with Remove, caption optional, pending bubble with the local image, Retry reuses path and client id |
+| `src/app/chatList.ts`, `src/pages/Home.tsx` | `chatPreview`: "Photo" for an image without a caption (+ tests) |
+
+- e2e step 48 (22 checks): EXIF planted in a 3000×2000 JPEG is gone from the
+  stored WebP (2048×1365); live delivery through a signed link; signed-out
+  and tampered-token requests refused; GIF refused; paste and Remove;
+  viewer and Esc; image-only message and "Photo" on Home; 390 px layout.
+  Whole walkthrough: 172 checks, passed twice in a row.
+
 ## Decisions
 
 Accepted by the developer (spec section 11):
@@ -614,6 +652,11 @@ announced live on the conversation channel.
 
 Recommendations not yet explicitly confirmed (fine to follow, but mention them
 when they come up): no request expiry.
+
+- **Message images (milestone 9, 17 Oct 2026):** one image per message,
+  optional caption; JPEG/PNG/WebP up to 20 MB picked, scaled to 2048 px and
+  re-encoded to WebP or JPEG (strips EXIF); bucket limit 5 MB; no GIFs;
+  private bucket, signed links valid 1 hour; file cleanup in milestone 10.
 
 Design: app name **Thread Buddies** (renamed from "Thread" on 15 Oct 2026,
 in the UI since milestone 3); font **Manrope**; accent **#f55252**; blacks
@@ -664,11 +707,16 @@ by Claude to match it.
 5. Bundle is ~261 kB (83 kB gzipped). Fine for now; code-split later.
 6. Accessibility note, left as designed: white text on `#f55252` is about
    3.2:1 contrast, below 4.5:1. Near-black text on the red would pass.
-7. **Leftover avatar files.** A failed delete of the old file leaves an
-   unused object; so will account deletion (profiles cascade, Storage
-   objects don't). SQL can't delete Storage files, so cleanup needs an Edge
-   Function (list files not referenced by any `avatar_path`). Rare and tiny at
-   this scale; handle with account deletion or milestone 10.
+7. **Leftover files (avatars and message images): milestone 10.** A failed
+   delete of an old avatar leaves an unused object; so will account deletion
+   (profiles cascade, Storage objects don't). Message images: a send that
+   fails after the upload, or a conversation deleted once both accounts are
+   gone, leaves files no row points at. They stay private (only members, or
+   nobody, can read them), so the cost is storage only. SQL can't delete
+   Storage files (`storage.protect_delete`), so cleanup needs an Edge
+   Function on a schedule: delete avatar files not referenced by any
+   `avatar_path`, and message images not in `message_attachments` and older
+   than a day (so an upload mid-send isn't removed).
 8. **Git remote URL.** Done on the Mac (16 Oct 2026): `origin` now points at
    `https://github.com/IshakSmajic/treads-buddies.git`. If another machine
    still uses the old `cuddly-garbanzo` URL, run
@@ -688,29 +736,22 @@ by Claude to match it.
 
 ## Next phase
 
-### Milestone 9: image messages (spec sections 2, 5 and 7)
+### Milestone 10: release (spec section 9)
 
 Plan outline to present for approval:
 
-- **Storage:** a **private** `message-images` bucket (unlike avatars), size
-  and type limits; files under `{conversation_id}/{uuid}.{ext}`. Read policy:
-  conversation members (`is_conversation_member` on the first folder). Upload
-  policy: members who can send (`can_send_in`). Viewing through signed URLs
-  (short expiry), not public URLs.
-- **Table** `message_attachments` as in spec section 5 (storage_path UNIQUE,
-  mime allow-list, size > 0 and under the limit). Messages may then have no
-  text: "text or at least one attachment" spans two tables, so a security
-  definer `send_image_message(conversation, client_id, path, caption)`
-  inserts both in one transaction and checks the upload exists and belongs
-  to the caller (like `set_avatar`).
-- **Client:** pick or paste an image, re-encode (strip EXIF/GPS, reuse
-  `image.ts` ideas, bigger max size), upload, then call the function; pending
-  bubble with progress; signed URLs refreshed when expired; a lightbox.
-- **Deletion:** account deletion keeps images for the other person (like
-  messages); deleting the conversation (both accounts gone) must delete the
-  files, which SQL can't do: needs the cleanup Edge Function (open item 7).
-- **Tests:** pgTAP for policies and the function; e2e upload/view, outsider
-  can't fetch, EXIF stripped.
+- **Security review:** the Supabase security and performance advisors on the
+  local stack, a pass over every policy and security-definer function, and
+  the `/security-review` of the branch.
+- **File cleanup Edge Function** (open item 7), scheduled with `pg_cron`.
+- **Mobile polish:** a pass at 360–430 px over every screen; safe-area
+  insets; the composer with the on-screen keyboard.
+- **Deploy** (ask first; open items 1, 3 and 4): recreate
+  `.env.production.local` on Arch, `vercel.json` rewrite, Vercel project and
+  env vars, `supabase db push` of the pending migrations, hosted auth
+  settings and redirect URLs, then a walkthrough on the real address.
+- Bundle size (open item 5) and the contrast note (open item 6) can be
+  revisited here.
 
 ## Tooling and gotchas
 

@@ -1,7 +1,8 @@
 // Checks against the running Realtime service that live events follow RLS:
 // a member receives a new message, an outsider subscribed to the same table
 // (even with the conversation's id as a filter) receives nothing, and a
-// friend request reaches only the two people in it. pgTAP can't test this:
+// friend request reaches only the two people in it; image files are private
+// to the conversation's members. pgTAP can't test this:
 // the filtering happens in the Realtime server, per subscriber.
 //
 // Needs the local stack. Creates three users and deletes them at the end.
@@ -86,6 +87,50 @@ check(people.ana.requests.length === 1 && people.ana.requests[0].eventType === '
 check(people.cai.requests.length === 1, 'cai receives it too (it is hers)')
 check(people.ben.requests.length === 0, 'ben, not part of it, receives nothing')
 
+// Image messages (milestone 9) ---------------------------------------------------
+console.log('3. Image messages: private files, live delivery')
+const images = (person) => person.client.storage.from('message-images')
+const statusOf = (error) => (error ? `${error.statusCode ?? error.status ?? '?'} ${error.message}` : 'ok')
+// A real 1×1 WebP; the bucket and send_image_message check type and size, not pixels.
+const webp = Buffer.from('UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAwA0JaQAA3AA/vuUAAA=', 'base64')
+const imagePath = `${conversation}/${crypto.randomUUID()}.webp`
+const upload = await images(people.ben).upload(imagePath, webp, { contentType: 'image/webp', upsert: false })
+check(!upload.error, `ben uploads an image into the conversation (${statusOf(upload.error)})`)
+const again = await images(people.ben).upload(imagePath, webp, { contentType: 'image/webp', upsert: false })
+check(again.error && String(again.error.statusCode) === '409', `uploading the same path again is a 409, which the app treats as done (${statusOf(again.error)})`)
+const gif = await images(people.ben).upload(`${conversation}/${crypto.randomUUID()}.webp`, webp, { contentType: 'image/gif' })
+check(Boolean(gif.error), `the bucket refuses a type outside its list (${statusOf(gif.error)})`)
+const intruder = await images(people.cai).upload(`${conversation}/${crypto.randomUUID()}.webp`, webp, { contentType: 'image/webp' })
+check(intruder.error && String(intruder.error.statusCode) === '403', `cai cannot upload into the conversation (${statusOf(intruder.error)})`)
+const caiLink = await images(people.cai).createSignedUrl(imagePath, 60)
+check(Boolean(caiLink.error), `cai cannot get a signed link to the image (${statusOf(caiLink.error)})`)
+const caiDownload = await images(people.cai).download(imagePath)
+check(Boolean(caiDownload.error), `cai cannot download it (${statusOf(caiDownload.error)})`)
+const anaLinks = await images(people.ana).createSignedUrls([imagePath], 60)
+const link = anaLinks.data?.[0]?.signedUrl
+const fetched = link ? Buffer.from(await (await fetch(link)).arrayBuffer()) : null
+check(Boolean(fetched?.equals(webp)), 'ana, a member, gets a signed link that serves the file')
+
+const beforeAna = people.ana.messages.length
+const beforeCai = people.cai.messages.length
+const clientId = crypto.randomUUID()
+const sent = await people.ben.client.rpc('send_image_message', { conversation, client_id: clientId, path: imagePath, width: 1, height: 1 })
+check(!sent.error && sent.data?.content === null, `ben sends it (${statusOf(sent.error)})`)
+// The app builds the attachment itself: an embedded select in the same
+// request reads a snapshot from before the function inserted it.
+const stored = await people.ana.client
+  .from('messages')
+  .select('*, attachments:message_attachments(id, storage_path, width, height)')
+  .eq('client_id', clientId)
+  .single()
+check(stored.data?.attachments?.[0]?.storage_path === imagePath, 'ana loads the message with its attachment')
+await sleep(2000)
+check(people.ana.messages.length === beforeAna + 1 && people.ana.messages.at(-1).content === null, 'ana receives the image message live')
+check(people.cai.messages.length === beforeCai, 'cai receives nothing')
+const removeSent = await images(people.ben).remove([imagePath])
+const stillThere = await images(people.ana).createSignedUrls([imagePath], 60)
+check(Boolean(stillThere.data?.[0]?.signedUrl), `a sent image cannot be deleted, even by its sender (remove: ${statusOf(removeSent.error)}, ${removeSent.data?.length ?? 0} removed)`)
+
 // Private channels (milestone 8) ------------------------------------------------
 // Joins a private channel; resolves with whether Realtime let us in.
 function join(person, topic, { presenceKey } = {}) {
@@ -103,7 +148,7 @@ function join(person, topic, { presenceKey } = {}) {
   )
 }
 
-console.log('3. A conversation channel is for its members')
+console.log('4. A conversation channel is for its members')
 const room = `conversation:${conversation}`
 const anaRoom = await join(people.ana, room)
 const benRoom = await join(people.ben, room)
@@ -116,7 +161,7 @@ await benRoom.channel.send({ type: 'broadcast', event: 'typing', payload: { user
 await sleep(1000)
 check(anaRoom.got.broadcasts.some((b) => b.event === 'typing'), 'a typing signal from ben reaches ana')
 
-console.log('4. Read receipts come from the database')
+console.log('5. Read receipts come from the database')
 const lastId = Number(sql(`select max(id) from public.messages where conversation_id = '${conversation}'`))
 const { error: readError } = await people.ana.client.rpc('mark_read', { conversation, message: lastId })
 check(!readError, 'ana marks the conversation read')
@@ -129,7 +174,7 @@ check(read?.payload?.user_id === people.ana.id && read?.payload?.message_id === 
 const forged = await anaRoom.channel.send({ type: 'broadcast', event: 'read', payload: { user_id: people.ana.id, message_id: 1 } })
 console.log(`  note: a member can broadcast a fake "read" event (${forged}); the app only re-reads positions from the table`)
 
-console.log('5. Online status is for friends')
+console.log('6. Online status is for friends')
 const benSelf = await join(people.ben, `user:${people.ben.id}`, { presenceKey: people.ben.id })
 check(benSelf.ok, 'ben joins his own presence channel')
 await benSelf.channel.track({ online_at: new Date().toISOString() })
@@ -142,9 +187,11 @@ const anaTrack = await anaWatch.channel.track({ pretend: true })
 await sleep(1000)
 check(anaTrack !== 'ok' || !Object.keys(benSelf.got.presence).some((k) => k !== people.ben.id), `ana cannot announce presence on ben's channel (${anaTrack})`)
 
-console.log('6. Ending the friendship')
+console.log('7. Ending the friendship')
 const { error: unfriendError } = await people.ana.client.rpc('unfriend', { other: people.ben.id })
 check(!unfriendError, 'ana unfriends ben')
+const afterUnfriend = await images(people.ben).upload(`${conversation}/${crypto.randomUUID()}.webp`, webp, { contentType: 'image/webp' })
+check(afterUnfriend.error && String(afterUnfriend.error.statusCode) === '403', `after unfriending, ben cannot upload images (${statusOf(afterUnfriend.error)})`)
 await sleep(1500)
 check(benRoom.got.broadcasts.some((b) => b.event === 'relationship'), 'ben’s open conversation hears that the friendship changed')
 // A separate client: realtime-js would hand back ana's existing channel.

@@ -1,10 +1,24 @@
-import { Fragment, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
+import {
+  Fragment,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type FormEvent,
+  type KeyboardEvent,
+} from 'react'
 import { Link, useParams } from 'react-router'
 import { useChats } from '../app/chats.ts'
 import { useAuth } from '../auth/context.ts'
 import { AppHeader } from '../components/AppHeader.tsx'
 import { Avatar } from '../components/Avatar.tsx'
+import { ImageViewer } from '../components/ImageViewer.tsx'
+import { MessageImage, MessageImagePlaceholder } from '../components/MessageImage.tsx'
 import { dayLabel, messageTime, sameDay } from '../lib/chatTime.ts'
+import { bubbleImageWidth, IMAGE_INPUT_TYPES, imageFileError } from '../lib/images.ts'
+import { newImagePath, prepareImage, sendImageMessage, type PreparedImage } from '../lib/imageUpload.ts'
+import { rememberLocalImage } from '../lib/imageUrls.ts'
 import {
   canSend,
   catchUp,
@@ -22,6 +36,7 @@ import {
   conversationSummary,
   markRead,
   messagesPage,
+  messageWithAttachments,
   otherReadPosition,
   PAGE_SIZE,
   SendError,
@@ -31,7 +46,13 @@ import {
 import { joinPrivate, onResume, subscribe, type LiveState, type PrivateChannel } from '../lib/realtime.ts'
 
 /** A message on its way: shown at the end until the server has it. */
-type Pending = { clientId: string; content: string; failed: string | null }
+type Pending = {
+  clientId: string
+  content: string
+  failed: string | null
+  /** An image message: the prepared file and its storage path, fixed for every retry. */
+  image?: { prepared: PreparedImage; path: string }
+}
 
 type Loaded =
   | { id: string; summary: ConversationSummary; messages: Message[]; hasOlder: boolean }
@@ -104,6 +125,11 @@ function Conversation({ me, initial }: ConversationProps) {
   const [live, setLive] = useState<LiveState>('connecting')
   const [otherRead, setOtherRead] = useState<ReadMark | null>(null)
   const [typing, setTyping] = useState(false)
+  // The image chosen for the next message: being re-encoded, or ready.
+  const [staged, setStaged] = useState<PreparedImage | 'preparing' | null>(null)
+  const [imageError, setImageError] = useState<string | null>(null)
+  const [viewing, setViewing] = useState<string | null>(null)
+  const fileInput = useRef<HTMLInputElement>(null)
   const { isOnline, markedRead, reload: reloadChats } = useChats()
   const room = useRef<PrivateChannel | null>(null)
   const typingTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -162,6 +188,17 @@ function Conversation({ me, initial }: ConversationProps) {
         // Our own send can arrive here before its insert returns.
         setPending((ps) => ps.filter((p) => p.clientId !== message.client_id))
         if (message.sender_id !== me) setTyping(false)
+        // Realtime sends only the messages row: fetch its images, unless our
+        // own send already brought them.
+        if (shown.current.find((m) => m.id === message.id)?.attachments) return
+        messageWithAttachments(message.id).then(
+          (full) => {
+            if (!full) return
+            if (atBottom()) scrollIntent.current = { kind: 'bottom' }
+            setMessages((ms) => mergeMessages(ms, [full]))
+          },
+          () => {}, // the next refresh brings them
+        )
       },
       onReady: () => void refresh(),
       onState: setLive,
@@ -255,10 +292,12 @@ function Conversation({ me, initial }: ConversationProps) {
     }
   }
 
-  async function deliver(clientId: string, content: string) {
+  async function deliver({ clientId, content, image }: Pending) {
     setPending((ps) => ps.map((p) => (p.clientId === clientId ? { ...p, failed: null } : p)))
     try {
-      const sent = await sendMessage(conversationId, clientId, content)
+      const sent = image
+        ? await sendImageMessage(conversationId, clientId, image.path, image.prepared, content)
+        : await sendMessage(conversationId, clientId, content)
       scrollIntent.current = { kind: 'bottom' }
       setMessages((ms) => mergeMessages(ms, [sent]))
       setPending((ps) => ps.filter((p) => p.clientId !== clientId))
@@ -273,19 +312,54 @@ function Conversation({ me, initial }: ConversationProps) {
     }
   }
 
+  async function stageImage(file: File) {
+    const problem = imageFileError(file)
+    setImageError(problem)
+    if (problem) return
+    if (ready) URL.revokeObjectURL(ready.previewUrl)
+    setStaged('preparing')
+    try {
+      setStaged(await prepareImage(file))
+    } catch (e) {
+      setStaged(null)
+      setImageError(e instanceof Error ? e.message : "That file couldn't be read as an image.")
+    }
+  }
+
+  function removeImage() {
+    if (ready) URL.revokeObjectURL(ready.previewUrl)
+    setStaged(null)
+  }
+
+  // Pasting an image (a screenshot, say) stages it; pasting text works as usual.
+  function onPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    const file = [...event.clipboardData.files].find((f) => f.type.startsWith('image/'))
+    if (!file) return
+    event.preventDefault()
+    void stageImage(file)
+  }
+
   function submit(event?: FormEvent) {
     event?.preventDefault()
-    if (!canSend(text)) return
+    if (!sendable) return
     const content = prepareMessage(text)
     // Made once per message and reused by every retry (see sendMessage).
     const clientId = crypto.randomUUID()
+    let image: Pending['image']
+    if (ready) {
+      image = { prepared: ready, path: newImagePath(conversationId, ready) }
+      // Once sent, the bubble shows the local file rather than download it.
+      rememberLocalImage(image.path, ready.previewUrl)
+      setStaged(null)
+    }
     setText('')
     // The other side hides "typing…" when this arrives, so the next keystroke
     // should signal again at once rather than wait out the 3 seconds.
     lastTypingSent.current = 0
     scrollIntent.current = { kind: 'bottom' }
-    setPending((ps) => [...ps, { clientId, content, failed: null }])
-    void deliver(clientId, content)
+    const message: Pending = { clientId, content, failed: null, image }
+    setPending((ps) => [...ps, message])
+    void deliver(message)
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -298,6 +372,9 @@ function Conversation({ me, initial }: ConversationProps) {
 
   const length = messageLength(text)
   const tooLong = messageError(text)
+  const ready = staged !== null && staged !== 'preparing' ? staged : null
+  // An image needs no caption; text needs at least one character.
+  const sendable = ready ? !tooLong : staged === null && canSend(text)
 
   return (
     <main className="chat" data-live={live}>
@@ -355,14 +432,27 @@ function Conversation({ me, initial }: ConversationProps) {
           {messages.map((m, i) => {
             const previous = messages[i - 1]
             const mine = m.sender_id === me
+            const images = m.attachments ?? []
+            // A live image message whose details are still on the way.
+            const awaiting = m.attachments === undefined && m.content === null
             return (
               <Fragment key={m.id}>
                 {(!previous || !sameDay(previous.created_at, m.created_at)) && (
                   <p className="chat-day">{dayLabel(m.created_at)}</p>
                 )}
                 <div className={`bubble-row${mine ? ' is-mine' : ''}`}>
-                  <div className="bubble">
-                    <p className="bubble-text">{m.content}</p>
+                  <div className={`bubble${images.length > 0 || awaiting ? ' has-image' : ''}`}>
+                    {images.map((a) => (
+                      <MessageImage
+                        key={a.id}
+                        path={a.storage_path}
+                        width={a.width}
+                        height={a.height}
+                        onOpen={setViewing}
+                      />
+                    ))}
+                    {awaiting && <MessageImagePlaceholder />}
+                    {m.content !== null && <p className="bubble-text">{m.content}</p>}
                     <time className="bubble-time" dateTime={m.created_at}>
                       {messageTime(m.created_at)}
                     </time>
@@ -374,15 +464,26 @@ function Conversation({ me, initial }: ConversationProps) {
           })}
           {pending.map((p) => (
             <div key={p.clientId} className="bubble-row is-mine is-pending">
-              <div className="bubble">
-                <p className="bubble-text">{p.content}</p>
+              <div className={`bubble${p.image ? ' has-image' : ''}`}>
+                {p.image && (
+                  <span
+                    className="bubble-image"
+                    style={{
+                      width: bubbleImageWidth(p.image.prepared.width, p.image.prepared.height),
+                      aspectRatio: `${p.image.prepared.width} / ${p.image.prepared.height}`,
+                    }}
+                  >
+                    <img src={p.image.prepared.previewUrl} alt="" />
+                  </span>
+                )}
+                {p.content && <p className="bubble-text">{p.content}</p>}
                 <span className="bubble-time">{p.failed ? 'Not sent' : 'Sending…'}</span>
               </div>
               {p.failed && (
                 <p className="bubble-error" role="alert">
                   {p.failed}{' '}
                   {summary.is_friend && (
-                    <button type="button" className="link-button" onClick={() => void deliver(p.clientId, p.content)}>
+                    <button type="button" className="link-button" onClick={() => void deliver(p)}>
                       Retry
                     </button>
                   )}
@@ -400,11 +501,53 @@ function Conversation({ me, initial }: ConversationProps) {
 
       {summary.is_friend ? (
         <form className="chat-composer" onSubmit={submit}>
+          {staged && (
+            <div className="chat-staged">
+              {ready ? (
+                <img className="chat-staged-thumb" src={ready.previewUrl} alt="Image to send" />
+              ) : (
+                <span className="chat-staged-thumb" />
+              )}
+              <span className="muted">{ready ? 'Image ready. Add a caption or send.' : 'Preparing image…'}</span>
+              <button type="button" className="link-button" onClick={removeImage}>
+                Remove
+              </button>
+            </div>
+          )}
+          {imageError && (
+            <p className="chat-counter is-invalid" role="alert">
+              {imageError}
+            </p>
+          )}
+          <button
+            type="button"
+            className="chat-attach"
+            aria-label="Add an image"
+            disabled={staged === 'preparing'}
+            onClick={() => fileInput.current?.click()}
+          >
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+              <rect x="3" y="4" width="18" height="16" rx="3" fill="none" stroke="currentColor" strokeWidth="1.8" />
+              <circle cx="9" cy="10" r="1.8" fill="currentColor" />
+              <path d="M4 18l5-5 4 4 3-3 4 4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+            </svg>
+          </button>
+          <input
+            ref={fileInput}
+            type="file"
+            accept={IMAGE_INPUT_TYPES.join(',')}
+            hidden
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              e.target.value = '' // so picking the same file again still fires
+              if (file) void stageImage(file)
+            }}
+          />
           <div className={`field-control is-multiline chat-input${tooLong ? ' is-invalid' : ''}`}>
             <textarea
               className="field-input"
               aria-label={`Message ${name}`}
-              placeholder={`Message ${name}`}
+              placeholder={staged ? 'Add a caption' : `Message ${name}`}
               rows={1}
               value={text}
               onChange={(e) => {
@@ -415,9 +558,10 @@ function Conversation({ me, initial }: ConversationProps) {
                 e.target.style.height = `${e.target.scrollHeight}px`
               }}
               onKeyDown={onKeyDown}
+              onPaste={onPaste}
             />
           </div>
-          <button type="submit" className="button button-primary chat-send" disabled={!canSend(text)}>
+          <button type="submit" className="button button-primary chat-send" disabled={!sendable}>
             Send
           </button>
           {(length >= COUNTER_FROM || tooLong) && (
@@ -433,6 +577,8 @@ function Conversation({ me, initial }: ConversationProps) {
             : `You and ${name} aren't friends any more. You can read your history, but neither of you can send new messages.`}
         </p>
       )}
+
+      {viewing && <ImageViewer url={viewing} onClose={() => setViewing(null)} />}
     </main>
   )
 }

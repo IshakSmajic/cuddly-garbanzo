@@ -46,15 +46,30 @@ export async function conversationWith(otherId: string): Promise<string | null> 
   return data?.conversation_id ?? null
 }
 
+/**
+ * Each message's images, in the same request (PostgREST follows the foreign
+ * key from message_attachments to messages). RLS applies to both tables.
+ */
+export const WITH_ATTACHMENTS = '*, attachments:message_attachments(id, storage_path, width, height)'
+
 /** The newest page, or the page before `before` (keyset paging). Oldest first. */
 export async function messagesPage(conversationId: string, before?: Message): Promise<Message[]> {
-  const { data, error } = await supabase.rpc('messages_page', {
-    conversation: conversationId,
-    ...(before && { before_created_at: before.created_at, before_id: before.id }),
-    page_size: PAGE_SIZE,
-  })
+  const { data, error } = await supabase
+    .rpc('messages_page', {
+      conversation: conversationId,
+      ...(before && { before_created_at: before.created_at, before_id: before.id }),
+      page_size: PAGE_SIZE,
+    })
+    .select(WITH_ATTACHMENTS)
   if (error) throw new Error("Couldn't load messages.")
   return (data ?? []).reverse()
+}
+
+/** One message with its images: a live event carries only the messages row. */
+export async function messageWithAttachments(id: number): Promise<Message | null> {
+  const { data, error } = await supabase.from('messages').select(WITH_ATTACHMENTS).eq('id', id).maybeSingle()
+  if (error) throw new Error("Couldn't load the message.")
+  return data
 }
 
 export class SendError extends Error {

@@ -74,6 +74,14 @@ describe('compareMessages and mergeMessages', () => {
     const three = message(3, '2026-10-16T07:00:02+00:00')
     expect(mergeMessages([one, three], [two, three]).map((m) => m.id)).toEqual([1, 2, 3])
   })
+
+  it('keeps loaded attachments when a copy without them arrives (a live event)', () => {
+    const image = { id: 9, storage_path: 'c/x.webp', width: 800, height: 600 }
+    const loaded = { ...message(1, '2026-10-16T07:00:00+00:00'), attachments: [image] }
+    const live = message(1, '2026-10-16T07:00:00+00:00')
+    expect(mergeMessages([loaded], [live])[0]?.attachments).toEqual([image])
+    expect(mergeMessages([live], [loaded])[0]?.attachments).toEqual([image])
+  })
 })
 
 describe('catchUp', () => {

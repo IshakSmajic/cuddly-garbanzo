@@ -704,7 +704,7 @@ async function pressEnter() {
     new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))`)
 }
 const bubbles = (selector = '.bubble-row') =>
-  evaluate(`[...document.querySelectorAll(${JSON.stringify(selector)})].map(b => b.querySelector('.bubble-text').innerText)`)
+  evaluate(`[...document.querySelectorAll(${JSON.stringify(selector)})].map(b => b.querySelector('.bubble-text')?.innerText ?? null)`)
 const settled = `!document.querySelector('.is-pending')`
 async function restWrite(method, query, body) {
   const session = JSON.parse(
@@ -961,6 +961,11 @@ async function openSecondBrowser() {
       })()`)
       await waitFor2(`!document.querySelector('.is-pending')`, `sent: ${value}`)
     },
+    async pickFile(filePath) {
+      const { root } = await page2.call('DOM.getDocument')
+      const { nodeId } = await page2.call('DOM.querySelector', { nodeId: root.nodeId, selector: 'input[type=file]' })
+      await page2.call('DOM.setFileInputFiles', { nodeId, files: [filePath] })
+    },
     async close() {
       await browser.call('Target.disposeBrowserContext', { browserContextId })
       page2.socket.close()
@@ -1195,7 +1200,143 @@ await go(APP + '/')
 await waitFor(`${homeRow}?.querySelector('.unread-badge') && ${homeRow}?.querySelector('.online-dot')`, 'mobile home', 8000)
 await shot('39-home-mobile-unread-online')
 check(!(await evaluate('document.documentElement.scrollWidth > window.innerWidth')), 'home with unread and online has no horizontal scroll at 390px')
+
+console.log('48. Image messages')
+// A JPEG with an EXIF block planted in it (a description standing in for GPS
+// data), so the test can check the uploaded copy no longer has it.
+function withExif(jpeg, note) {
+  const text = Buffer.from(`${note}\0`, 'ascii')
+  const tiff = Buffer.alloc(26)
+  tiff.write('II', 0) // little-endian
+  tiff.writeUInt16LE(42, 2)
+  tiff.writeUInt32LE(8, 4) // first directory
+  tiff.writeUInt16LE(1, 8) // one entry: ImageDescription, ASCII, stored after the directory
+  tiff.writeUInt16LE(0x010e, 10)
+  tiff.writeUInt16LE(2, 12)
+  tiff.writeUInt32LE(text.length, 14)
+  tiff.writeUInt32LE(26, 18)
+  tiff.writeUInt32LE(0, 22) // no next directory
+  const payload = Buffer.concat([Buffer.from('Exif\0\0', 'latin1'), tiff, text])
+  const marker = Buffer.from([0xff, 0xe1, 0, 0])
+  marker.writeUInt16BE(payload.length + 2, 2)
+  return Buffer.concat([jpeg.subarray(0, 2), marker, payload, jpeg.subarray(2)])
+}
+const canvasImage = (width, height, type) =>
+  evaluate(`(() => {
+    const c = document.createElement('canvas');
+    c.width = ${width}; c.height = ${height};
+    const g = c.getContext('2d');
+    const grad = g.createLinearGradient(0, 0, ${width}, ${height});
+    grad.addColorStop(0, '#f55252'); grad.addColorStop(1, '#2a6cf5');
+    g.fillStyle = grad; g.fillRect(0, 0, ${width}, ${height});
+    return c.toDataURL(${JSON.stringify(type)}).split(',')[1];
+  })()`)
+const imageFiles = mkdtempSync(join(tmpdir(), 'thread-e2e-images-'))
+const secret = 'GPS 48.8584N 2.2945E'
+const photo = join(imageFiles, 'holiday.jpg')
+writeFileSync(photo, withExif(Buffer.from(await canvasImage(3000, 2000, 'image/jpeg'), 'base64'), secret))
+check(readFileSync(photo).includes(secret), 'the test photo carries EXIF metadata')
+const square = join(imageFiles, 'square.png')
+writeFileSync(square, png(600, 600))
+const notImage = join(imageFiles, 'animation.gif')
+writeFileSync(notImage, Buffer.from('GIF89a'))
+
+await viewport(1680, 900)
+await go(APP + chatPath)
+await waitFor(`${isLive} && document.querySelector('.chat-composer')`, 'ben chat for images')
+await pickFile(notImage)
+await waitFor(has('Choose a JPEG, PNG or WebP image.'), 'gif refused')
+check(!(await evaluate(`document.querySelector('.chat-staged')`)), 'a GIF is refused before anything is uploaded')
+
+await pickFile(photo)
+await waitFor(`document.querySelector('img.chat-staged-thumb')`, 'staged')
+check((await text()).includes('Image ready. Add a caption or send.'), 'a picked photo is staged in the composer')
+check(!(await text()).includes('Choose a JPEG'), 'the earlier error clears')
+await compose('Holiday')
+await click('Send')
+await waitFor(`${settled} && document.querySelector('.bubble-row.is-mine:last-of-type .bubble-image img')`, 'image sent', 15000)
+check(
+  (await evaluate(`document.querySelector('.bubble-row.is-mine:last-of-type .bubble-text')?.innerText`)) === 'Holiday',
+  'the image is sent with its caption',
+)
+check(!(await evaluate(`document.querySelector('.chat-staged')`)), 'the composer is empty again')
+
+const latestImage = `document.querySelector('.bubble-row:not(.is-mine):last-of-type .bubble-image img')`
+await anaBrowser.waitFor(`${latestImage}?.complete && ${latestImage}.naturalWidth > 0`, 'ana sees image', 8000)
+check(true, 'ana receives the image live and it loads')
+const anaSrc = await anaBrowser.evaluate(`${latestImage}.src`)
+check(anaSrc.includes('/storage/v1/object/sign/message-images/'), 'it is shown through a signed link, not a public URL')
+
+const [attachment] = await rest('message_attachments?select=storage_path,mime_type,size_bytes,width,height&order=id.desc&limit=1')
+check(
+  attachment?.mime_type === 'image/webp' && attachment.width === 2048 && attachment.height === 1365,
+  `the stored image is WebP, scaled to 2048 px (${JSON.stringify(attachment && [attachment.mime_type, attachment.width, attachment.height])})`,
+)
+const storedFile = Buffer.from(await (await fetch(anaSrc)).arrayBuffer())
+check(storedFile.length === attachment?.size_bytes && storedFile.subarray(8, 12).toString() === 'WEBP', 'the signed link serves that file')
+check(!storedFile.includes('Exif') && !storedFile.includes(secret), 'the uploaded file has no EXIF: the planted location is gone')
+const signedOut = await fetch(`${env.VITE_SUPABASE_URL}/storage/v1/object/public/message-images/${attachment?.storage_path}`)
+const anonymous = await fetch(`${env.VITE_SUPABASE_URL}/storage/v1/object/message-images/${attachment?.storage_path}`, {
+  headers: { apikey: env.VITE_SUPABASE_PUBLISHABLE_KEY },
+})
+check(!signedOut.ok && !anonymous.ok, `without a session or a signed link the file can't be fetched (${signedOut.status}, ${anonymous.status})`)
+const tampered = new URL(anaSrc)
+tampered.searchParams.set('token', `${tampered.searchParams.get('token')}x`)
+check(!(await fetch(tampered)).ok, 'a signed link with a changed token is refused')
+
+const box = await evaluate(`(() => { const b = document.querySelector('.bubble-row.is-mine:last-of-type .bubble-image').getBoundingClientRect(); return [Math.round(b.width), Math.round(b.height)] })()`)
+check(box[0] === 280 && Math.abs(box[1] - 187) <= 1, `the image box has the photo's shape (${box.join('×')})`)
+await go(APP + chatPath)
+await waitFor(`document.querySelector('.bubble-row.is-mine:last-of-type .bubble-image img')?.complete`, 'after reload')
+check(
+  (await evaluate(`document.querySelector('.bubble-row.is-mine:last-of-type .bubble-image img').src`)).includes('/object/sign/'),
+  'after a reload, ben’s own image comes through a signed link too',
+)
+check(
+  await evaluate(`(() => { const s = document.querySelector('.chat-scroll'); return s.scrollHeight - s.scrollTop - s.clientHeight < 4 })()`),
+  'the chat still opens at the newest message with images in it',
+)
+await shot('40-chat-image')
+
+await evaluate(`document.querySelector('.bubble-row.is-mine:last-of-type .bubble-image').click()`)
+await waitFor(`document.querySelector('dialog.image-viewer[open] img')?.complete`, 'viewer')
+await shot('41-image-viewer')
+await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
+await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
+await waitFor(`!document.querySelector('dialog.image-viewer')`, 'viewer closed')
+check(true, 'tapping an image opens it full screen; Esc closes it')
+
+// Pasting a screenshot stages it, like picking a file.
+await evaluate(`(async () => {
+  const blob = await (await fetch('data:image/png;base64,' + ${JSON.stringify(await canvasImage(400, 300, 'image/png'))})).blob();
+  const data = new DataTransfer();
+  data.items.add(new File([blob], 'screenshot.png', { type: 'image/png' }));
+  document.querySelector('.chat-composer textarea').dispatchEvent(
+    new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+})()`)
+await waitFor(`document.querySelector('img.chat-staged-thumb')`, 'pasted')
+check(true, 'pasting an image stages it')
+await click('Remove')
+await waitFor(`!document.querySelector('.chat-staged')`, 'removed')
+check(await evaluate(`document.querySelector('.chat-send').disabled`), 'Remove takes it out again, and there is nothing to send')
+
+await anaBrowser.pickFile(square)
+await anaBrowser.waitFor(`document.querySelector('img.chat-staged-thumb')`, 'ana staged')
+await anaBrowser.click('Send')
+await anaBrowser.waitFor(`!document.querySelector('.is-pending')`, 'ana sent image', 15000)
+await waitFor(`${latestImage}?.complete && !document.querySelector('.bubble-row:last-of-type .bubble-text')`, 'ben gets image only', 8000)
+check(true, 'an image without a caption is sent and arrives live')
+await go(APP + '/')
+await waitFor(`${homeRow}`, 'home for photo')
+check((await evaluate(`${homeRow}.innerText`)).includes('Photo'), 'home shows “Photo” for an image without a caption')
+
+await viewport(390, 844, true)
+await go(APP + chatPath)
+await waitFor(`document.querySelectorAll('.bubble-image img').length >= 2 && [...document.querySelectorAll('.bubble-image img')].every(i => i.complete)`, 'mobile images')
+await shot('42-chat-images-mobile')
+check(!(await evaluate('document.documentElement.scrollWidth > window.innerWidth')), 'a chat with images has no horizontal scroll at 390px')
 await anaBrowser.close()
+rmSync(imageFiles, { recursive: true, force: true })
 
 ws.close()
 console.log(process.exitCode ? 'Some checks FAILED' : 'All checks passed')

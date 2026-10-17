@@ -20,3 +20,9 @@ export function withMessage(chats: ConversationSummary[], m: Message, me: string
     )
     .sort((a, b) => (b.last_at ? timeKey(b.last_at) : 0) - (a.last_at ? timeKey(a.last_at) : 0))
 }
+
+/** The chat list's second line: the last message, "Photo" for an image without a caption. */
+export function chatPreview(chat: ConversationSummary, me: string | undefined): string {
+  if (chat.last_at === null) return 'No messages yet'
+  return `${chat.last_sender_id === me ? 'You: ' : ''}${chat.last_content ?? 'Photo'}`
+}

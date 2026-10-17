@@ -190,9 +190,10 @@ select ok(
 
 select is(
   (select array_agg(policyname::text order by policyname) from pg_policies
-   where schemaname = 'storage' and tablename = 'objects' and cmd = 'DELETE'),
+   where schemaname = 'storage' and tablename = 'objects' and cmd = 'DELETE'
+     and qual like '%avatars%'),
   array['Users delete their own avatar files except the current one'],
-  'only the guarded delete policy exists'
+  'only the guarded delete policy exists for avatars'
 );
 
 select * from finish();

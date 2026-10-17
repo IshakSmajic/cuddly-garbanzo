@@ -1,4 +1,5 @@
 import { Link } from 'react-router'
+import { chatPreview } from '../app/chatList.ts'
 import { useChats } from '../app/chats.ts'
 import { useAuth } from '../auth/context.ts'
 import { AppHeader } from '../components/AppHeader.tsx'
@@ -54,10 +55,7 @@ export function Home() {
 function ChatRow({ chat, me, online }: { chat: ConversationSummary; me: string | undefined; online: boolean }) {
   const deleted = chat.other_id === null
   const name = deleted ? 'Deleted user' : chat.display_name
-  const preview =
-    chat.last_content === null
-      ? 'No messages yet'
-      : `${chat.last_sender_id === me ? 'You: ' : ''}${chat.last_content}`
+  const preview = chatPreview(chat, me)
   const unread = chat.unread_count > 0
   return (
     <li className="person-row">

@@ -235,6 +235,48 @@ export type Database = {
           },
         ];
       };
+      message_attachments: {
+        Row: {
+          created_at: string;
+          height: number;
+          id: number;
+          message_id: number;
+          mime_type: string;
+          size_bytes: number;
+          storage_path: string;
+          width: number;
+        };
+        ComputedFields: never;
+        Insert: {
+          created_at?: string;
+          height: number;
+          id?: never;
+          message_id: number;
+          mime_type: string;
+          size_bytes: number;
+          storage_path: string;
+          width: number;
+        };
+        Update: {
+          created_at?: string;
+          height?: number;
+          id?: never;
+          message_id?: number;
+          mime_type?: string;
+          size_bytes?: number;
+          storage_path?: string;
+          width?: number;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "message_attachments_message_id_fkey";
+            columns: ["message_id"];
+            isOneToOne: false;
+            referencedRelation: "messages";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       messages: {
         Row: {
           client_id: string;
@@ -399,6 +441,30 @@ export type Database = {
         }[];
       };
       send_friend_request: { Args: { recipient: string }; Returns: string };
+      send_image_message: {
+        Args: {
+          caption?: string;
+          client_id: string;
+          conversation: string;
+          height: number;
+          path: string;
+          width: number;
+        };
+        Returns: {
+          client_id: string;
+          content: string | null;
+          conversation_id: string;
+          created_at: string;
+          id: number;
+          sender_id: string | null;
+        };
+        SetofOptions: {
+          from: "*";
+          to: "messages";
+          isOneToOne: true;
+          isSetofReturn: false;
+        };
+      };
       set_avatar: { Args: { new_path: string }; Returns: string };
       unblock_user: { Args: { target: string }; Returns: undefined };
       unfriend: { Args: { other: string }; Returns: undefined };

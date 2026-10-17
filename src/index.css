@@ -999,7 +999,7 @@ textarea.field-input {
 
 .chat-composer {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: auto 1fr auto;
   align-items: end;
   gap: 10px;
   padding: 12px 16px 16px;
@@ -1140,4 +1140,148 @@ textarea.field-input {
 .person-row > .chat-row {
   align-self: stretch;
   width: 100%;
+}
+
+/* Images in messages ------------------------------------------------------------ */
+/* A column as wide as the image: the caption wraps to it. */
+.bubble.has-image {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  width: min-content;
+  padding: 4px;
+}
+
+.bubble.has-image .bubble-text {
+  padding: 2px 8px 0;
+}
+
+.bubble.has-image .bubble-time {
+  align-self: flex-end;
+  padding: 0 8px 4px;
+}
+
+/* Width and aspect-ratio come from the attachment, so the box has its final
+   size before the file loads. */
+.bubble-image {
+  display: block;
+  flex: none;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--black-1);
+  cursor: zoom-in;
+}
+
+.bubble-image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.bubble-image.is-loading {
+  width: 200px;
+  aspect-ratio: 4 / 3;
+}
+
+.bubble-image:disabled {
+  cursor: default;
+}
+
+.bubble-image.is-failed {
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  color: var(--grey-1);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.chat-attach {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--black-2);
+  color: var(--grey-1);
+  cursor: pointer;
+}
+
+.chat-attach:hover:not(:disabled) {
+  border-color: var(--grey-3);
+  color: var(--white);
+}
+
+.chat-attach:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.chat-staged {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.chat-staged .muted {
+  flex: 1;
+}
+
+.chat-staged-thumb {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius);
+  background: var(--black-2);
+  object-fit: cover;
+}
+
+/* Full-screen image ---------------------------------------------------------------- */
+.image-viewer {
+  width: 100vw;
+  max-width: none;
+  height: 100dvh;
+  max-height: none;
+  margin: 0;
+  padding: 16px;
+  border: 0;
+  background: transparent;
+}
+
+.image-viewer[open] {
+  display: grid;
+  place-items: center;
+}
+
+.image-viewer::backdrop {
+  background: rgba(5, 5, 5, 0.92);
+}
+
+.image-viewer img {
+  max-width: 100%;
+  max-height: calc(100dvh - 32px);
+  border-radius: var(--radius);
+  object-fit: contain;
+}
+
+.image-viewer-close {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--black-2);
+  color: var(--white);
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
 }

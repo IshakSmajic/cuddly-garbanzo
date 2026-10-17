@@ -6,13 +6,22 @@ export const MESSAGE_MAX = 4000 // matches messages_content
 /** Show the counter only once it matters. */
 export const COUNTER_FROM = 3500
 
+/** An image in a message (message_attachments). width and height are a layout hint. */
+export type Attachment = { id: number; storage_path: string; width: number; height: number }
+
 export type Message = {
   id: number
   conversation_id: string
   sender_id: string | null
   client_id: string
+  /** Null for an image without a caption. */
   content: string | null
   created_at: string
+  /**
+   * Loaded with history; missing on a live event (Realtime sends only the
+   * messages row), until it's fetched.
+   */
+  attachments?: Attachment[]
 }
 
 /** What gets sent: spaces and line breaks at the ends are dropped. */
@@ -52,10 +61,16 @@ export function compareMessages(a: Message, b: Message): number {
   return timeKey(a.created_at) - timeKey(b.created_at) || a.id - b.id
 }
 
-/** Adds messages, dropping any already present (same id), keeping the order. */
+/**
+ * Adds messages, dropping any already present (same id), keeping the order.
+ * A copy without attachments (a live event) keeps the ones already loaded.
+ */
 export function mergeMessages(existing: Message[], incoming: Message[]): Message[] {
   const byId = new Map(existing.map((m) => [m.id, m]))
-  for (const m of incoming) byId.set(m.id, m)
+  for (const m of incoming) {
+    const known = byId.get(m.id)?.attachments
+    byId.set(m.id, m.attachments || !known ? m : { ...m, attachments: known })
+  }
   return [...byId.values()].sort(compareMessages)
 }
 
